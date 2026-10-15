@@ -762,6 +762,8 @@ Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über 
 - **Follow-up 21:35:** stack arguments 5/6 are now written only on the success path (after the game-pointer check,
   helper calls and context restore); the error path leaves registers and stack unchanged. Re-test: fast 3/3 PASS,
   normal 1/1 PASS, saves unchanged (runs with JFG_NO_AUDIO=1 because the WASAPI modal box is back on this PC).
+- **Follow-up 22:03:** `test_started` is set only after a valid game pointer; an invalid pointer leaves the request,
+  registers and stack unchanged so the 0x15D fallback can retry. Re-test: fast 3/3, normal 1/1 PASS, saves unchanged.
 - **Status:** Goldwood direct start is complete. 60 Hz is NOT started; waiting for planner review.
 
 ## Previous Last result (Norton-off sprint, 2026-10-15 evening, WIP): baseline clean, 0x16D resolved, menu-free start works

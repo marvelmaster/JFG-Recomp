@@ -1215,3 +1215,6 @@ Times of the 10 fast runs (script ms = from the game's first pad poll; process m
 - Environment: the WASAPI modal box ("No audio device ... Das Handle ist ungültig") was back on this PC, so these runs
   used JFG_NO_AUDIO=1 (test-only). Not related to the change. tools/test_menu_free_start.ps1 now reports a missing
   jfg_trace.log as a FAIL of that run instead of aborting the script.
+- 22:03: `test_started` is now set only after the game-pointer check. With an invalid pointer the request passes
+  unchanged (registers restored, stack untouched) and the later 0x15D fallback trigger can still start the test.
+  Re-test (JFG_NO_AUDIO=1, RUN_VALID=1): fast 3/3 PASS (0x5C at 507-772 ms), normal 1/1 PASS, saves unchanged.

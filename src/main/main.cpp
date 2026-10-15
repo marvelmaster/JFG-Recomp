@@ -799,15 +799,18 @@ extern "C" void jfg_change_level(uint8_t* rdram, recomp_context* ctx) {
     static bool test_started = false;
     const bool fast_hit = !jfg_test_start_full && level == 0 && (int32_t)ctx->r7 == 2;
     if (jfg_test_start_char >= 0 && !test_started && (level == 0x15D || fast_hit)) {
-        test_started = true;
         const recomp_context saved = *ctx;
         mainGetGame(rdram, ctx);
         const gpr game = ctx->r2;
         if ((uint32_t)game < 0x80000000u || (uint32_t)game >= 0x80800000u) {
+            // Registers restored, stack untouched, test_started stays false: this request passes unchanged and the
+            // title request 0x15D (fallback trigger) can try again.
             *ctx = saved;
-            fprintf(stderr, "[JFG] --jfg-test-start: game struct pointer 0x%08X invalid, start NOT changed.\n", (uint32_t)game);
+            fprintf(stderr, "[JFG] --jfg-test-start: game struct pointer 0x%08X invalid at level 0x%X, request NOT changed.\n",
+                (uint32_t)game, (uint32_t)level);
             return;
         }
+        test_started = true;
         ctx->r4 = game;
         mainSetDefaultGame(rdram, ctx);
         ctx->r4 = 0;
