@@ -994,3 +994,14 @@ _(either side; delete when answered)_
 - 2026-10-15 21:10 Fast start: direct 0x5C validated by state comparison, default `--jfg-test-start goldwood` (10/10 PASS, 0x5C in about 0.6 s game time), generator reproducible (Claude).
 - 2026-10-15 20:35 Norton-off sprint: clean single-process baseline, 0x16D resolved, menu-free `--jfg-test-start goldwood` (10/10 PASS) and `goldwood-landing` (5/5 PASS) (Claude).
 - 2026-10-15 13:00 Repo created; state: playable to Goldwood, mouse aim, optional mouse camera; 60 Hz gameplay checkbox in progress (Codex, 12:12).
+
+## Interim note (skeletal mesh task, 2026-10-15 23:20, stopped on usage limit, NOT finished)
+- Repro: `--jfg-test-start goldwood`, JFG_60HZ_GAMEPLAY=0, JFG_NO_AUDIO=1, JFG_INPUT_SCRIPT=200:UP:8000, screenshot at
+  12 s (Magnus dialogue, side view): Juno drawn as twisted "slices"; Magnus (also animated) looks correct.
+- [Trace] RT64's CPU-side vertex positions (posTransformed/posScreen, per vertex load with the combined joint matrix)
+  give a coherent Juno when rendered offline (new env-gated dump JFG_DUMP_TRIS_DL=<dl> in lib/rt64 rt64_gbi_f3djfg.cpp,
+  local only, not yet in lib-patches). So the error is after the RSP stage.
+- [Code] modifyVertex copies keep worldIndices; [Trace] disabling the transform lerp (prev/cur matching) does NOT fix it.
+- [Trace] Juno draws: omL=C8112078 (Z_CMP+Z_UPD on), geo=00812205, screen z 0.902-0.921, clip w 103-128 (plausible).
+- Next: compare GPU vertex output vs posScreen for one triangle (RT64 rsp_processor / vertex shader path), check
+  depth/culling/coverage per draw call; then fix at the first wrong stage.
