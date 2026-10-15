@@ -37,6 +37,7 @@ Requirements: Visual Studio 2022 with "C++ Clang Compiler for Windows", CMake, N
 4. `build_jfg.bat` (configure + build) - output `build-cmake/JFGRecompiled.exe`, then `run_jfg.bat`.
 
 ## Notes for contributors / AI assistants
+- **[HANDOFF.md](HANDOFF.md)** is the message board between the ChatGPT planner and the Codex implementer (current task, last result, questions).
 - Read `decomp/docs/RECOMP.md` first; keep its "CURRENT STATUS" up to date and add dated log entries.
 - `decomp/` is a snapshot of the separate local decomp project (`F:\SelfmadeTools\JFG_Decomp`); the generator scripts
   there use that project's paths.
