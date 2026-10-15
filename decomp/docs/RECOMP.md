@@ -896,3 +896,69 @@ script (first 0x5D, then 0x5C). The landing is not a separate code path.
 - Who starts overlay 24 (trackInit) and where the player control gate is set.
 - Condition of cutscene command 0x7A (script timing) and where 0x5C is decided.
 - Call of 0x0 (mode 2) from func_80044938 (ra 0x800451BC): trampoline pairing missing.
+
+## 2026-10-15 (process investigation): double launch, harness fix, what is and is not proven (Codex)
+Labels: [Measured] = observed with PID/time; [Code] = read in the scripts; [Not proven] = could not be shown.
+
+### Facts from the Windows event log  [Measured]
+- Two JFGRecompiled.exe processes started at 17:29:09 and crashed:
+  - PID 0xBE8C (48780), start 17:29:09.571, crash (Application Error 1000, exception 0xC0000005) at 17:29:36.
+  - PID 0x7DA0 (32160), start 17:29:09.895, crash at 17:29:30.
+  - Both: same module, same fault offset 0x7E69 = RVA of jfg_change_level (link map: 0x140007DF0 + 0x79).
+  - Both used the exe with PE link time 0x6AD0F144 = 15.10.2026 17:29:08. The current exe was linked at 17:31:37.
+- Plausible cause of the crash (not separately reproduced): the trace read of the word at ra-8 in jfg_change_level for
+  the first mainChangeLevel call, where ra = 0. That read faults. The first call is at about 20 s, which matches. Fixed
+  later with the guard "ra >= 0x80000008" (commit 022d1de adds the guard path; the trace is env-gated).
+
+### Single launch vs. harness launch  [Measured]
+- Direct start (Start-Process of the exe, no cmd, no test script): 1 instance (PID 28256, parent = PowerShell). Save
+  hash unchanged.
+- Harness launch (run_capture.ps1, old version): 1 instance in one run; launch probe: 3 of 3 runs one instance,
+  visible after 0.13-0.20 s, retry branch NOT taken.
+- So under normal conditions the old harness did not start a second instance by itself. A second instance can only be
+  started by a second launch while the first is alive.
+
+### What was wrong in the harness  [Code]
+1. No check for a running instance: a second launch was not refused.
+2. All runs share build-cmake\run-jfg (jfg_trace.log, saves, mods.json). Two instances write the same files.
+3. Stop-Process -Name stopped all instances, not the tested PID.
+4. shot_window.ps1 took the first JFGRecompiled window, not the tested PID.
+5. The run log was taken as "newest run_*.log", not the log that run_capture printed.
+6. -ScriptTime could match an old jfg_trace.log.
+7. The launch retry starts a second instance when the first is not visible after 2 s.
+
+### Changes (tools/run_capture.ps1, tools/shot_window.ps1, tools/test_debug_start.ps1)  [Code]
+- Refuses to start (exit 3) when any JFGRecompiled.exe is running. Binds to the PID of its own game process (child of its
+  cmd.exe). Removes the old trace before start. Samples the instance count during the run. Stops only its own PID.
+  Output: RUN_PID=, max_instances_seen=, RUN_VALID=1 / RUN_VALID=0 (...). Exit 5 when another instance was seen.
+- shot_window.ps1 takes -ProcessId. test_debug_start.ps1 takes the log path and PID from run_capture's output and fails
+  runs without RUN_VALID=1.
+- Verified: (A) harness with one instance already running: "REFUSED: 1 ... pid 47788", exit 3. (B) normal run: RUN_PID
+  matched, max_instances_seen=1, RUN_VALID=1, exit 0, no instance left.
+- Bug found while testing the fix: a PowerShell function returning one CIM object is unrolled, so .Count was empty and the
+  check never fired. Fixed with @().
+
+### Norton  [Measured, limited]
+- NortonSvc and NortonUI are running. SecurityCenter logs only status updates (SECURITY_PRODUCT_STATE_ON).
+- No event in the Application log shows Norton blocking, quarantining or killing JFGRecompiled.exe.
+- Security audit log (4688 process creation) is not enabled or not readable here, so the parent of the 17:29 pair
+  is unknown. Norton's own activity log was NOT checked and Norton was NOT disabled.
+- Conclusion: no evidence that Norton caused the double start; also not excluded that it delays launches.
+
+### Which process wrote what  [Code + Measured]
+- Logs: run_capture writes runlogs\run_<stamp>.log for the process it started (stdout/stderr redirect). Since the fix,
+  the log path and PID are printed as "log:" and "RUN_PID=".
+- jfg_trace.log, saves, mods.json: written by the game into build-cmake\run-jfg. These are shared by all instances,
+  so any run in which two instances overlapped mixes them. The 17:29 run log contains only one start sequence.
+- Screenshots: shot_<stamp>_<s>.png, taken from the PID passed to shot_window.ps1 (after the fix).
+
+### Consequences for earlier results  [Not proven, flagged]
+- Every run before 19:00 (this session) was made with the old harness. Overlap cannot be excluded for them, except the
+  checked 17:29 case. Timing, reproducibility, 60 Hz, and debug-start PASS results from earlier runs are NOT reliable
+  until repeated with the new harness.
+- The debug-start PASS of 15:xx/17:xx runs is therefore not evidence for reproducibility.
+
+### Not done
+- No new timing or reproducibility measurement is accepted until repeated with run_capture RUN_VALID=1.
+- Norton activity log not inspected (user action needed if Norton is suspected).
+- Who started the second process at 17:29:09.57 is not identified (no process creation audit).

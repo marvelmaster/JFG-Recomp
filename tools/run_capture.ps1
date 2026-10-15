@@ -4,27 +4,56 @@
 #            [-ExtraArgs "--test-start-button"] [-Env "JFG_TRACE_AUDIO=1;JFG_TRACE_INPUT=1"]
 # -ScriptTime: shot times (and -Seconds) count from the first pad poll, i.e. the JFG_INPUT_SCRIPT time base
 #   (detected via the "[JFG] Scripted input:" line in jfg_trace.log of the run folder), not from the launch.
+#
+# Run validity (see RECOMP.md, "process investigation"): a run starts only when no JFGRecompiled.exe is running,
+# binds to the PID of the game process it started (parent = its cmd.exe), takes screenshots of that PID only,
+# samples the instance count during the run, and stops only that PID. Output ends with "RUN_PID=<pid>" and
+# "RUN_VALID=1" or "RUN_VALID=0 (<reason>)". Exit code: 0 valid, 3 refused (instance running), 4 no game process, 5 invalid.
 param([int]$Seconds = 60, [string]$Shots = "20,40,60", [string]$ExtraArgs = "", [string]$Env = "", [switch]$NoConsole, [switch]$ScriptTime)
 foreach ($kv in ($Env -split ";" | Where-Object { $_ })) { $k, $v = $kv -split "=", 2; Set-Item "env:$k" $v }
 $root = Split-Path -Parent $PSScriptRoot
 $run = Join-Path $root "build-cmake\run-jfg"
 $out = Join-Path $root "runlogs"
 New-Item -ItemType Directory -Force $out | Out-Null
-$stamp = Get-Date -Format "MMdd_HHmmss"
+$stamp = Get-Date -Format "MMdd_HHmmssfff"
 $log = Join-Path $out "run_$stamp.log"
 $exe = Join-Path $root "build-cmake\JFGRecompiled.exe"
 $winshot = Join-Path $PSScriptRoot "shot_window.ps1"
 $consoleArg = if ($NoConsole) { "" } else { "--show-console" }
-# The first launch right after a rebuild is sometimes refused ("Access is denied", probably the
-# virus scanner still holding the fresh exe). Retry a few times before starting the clock.
-for ($try = 0; $try -lt 5; $try++) {
-    Start-Process -FilePath "cmd.exe" -WorkingDirectory $run -WindowStyle Hidden `
-        -ArgumentList "/c `"`"$exe`" $consoleArg --start-game $ExtraArgs > `"$log`" 2>&1`""
-    Start-Sleep -Seconds 2
-    if (Get-Process JFGRecompiled -ErrorAction SilentlyContinue) { break }
-    "launch attempt $try failed: $(Get-Content $log -TotalCount 1 -ErrorAction SilentlyContinue)"
-    Start-Sleep -Seconds 3
+
+function Get-GameInstances { @(Get-CimInstance Win32_Process -Filter "Name='JFGRecompiled.exe'" -ErrorAction SilentlyContinue) }
+
+# 1. Refuse to start next to another instance: both would write the same run folder (trace, saves, mods.json).
+$existing = @(Get-GameInstances)   # @() keeps a single result an array (PowerShell unrolls one object otherwise)
+if ($existing.Count -gt 0) {
+    "REFUSED: $($existing.Count) JFGRecompiled.exe already running (pid " + (($existing | ForEach-Object { $_.ProcessId }) -join ',') + "). Stop it first."
+    exit 3
 }
+# 2. Remove the old trace so -ScriptTime cannot match an earlier run.
+Remove-Item (Join-Path $run "jfg_trace.log") -ErrorAction SilentlyContinue
+
+# 3. Launch and bind to the game PID (child of the cmd.exe wrapper we started).
+$gamePid = $null; $cmd = $null
+for ($try = 0; $try -lt 3 -and -not $gamePid; $try++) {
+    $cmd = Start-Process -FilePath "cmd.exe" -WorkingDirectory $run -WindowStyle Hidden -PassThru `
+        -ArgumentList "/c `"`"$exe`" $consoleArg --start-game $ExtraArgs > `"$log`" 2>&1`""
+    for ($i = 0; $i -lt 50 -and -not $gamePid; $i++) {
+        Start-Sleep -Milliseconds 100
+        $child = Get-GameInstances | Where-Object { $_.ParentProcessId -eq $cmd.Id }
+        if ($child) { $gamePid = [int]($child | Select-Object -First 1).ProcessId }
+    }
+    if (-not $gamePid) { "launch attempt ${try}: no game process under cmd pid $($cmd.Id) within 5 s"; Start-Sleep -Seconds 2 }
+}
+if (-not $gamePid) { "FAILED: game process did not start"; "log: $log"; exit 4 }
+"RUN_PID=$gamePid cmd_pid=$($cmd.Id) started=$((Get-Date).ToString('HH:mm:ss.fff'))"
+$maxInstances = 1
+$duplicate = $false
+function Sample-Instances {
+    $n = @(Get-GameInstances).Count
+    if ($n -gt $script:maxInstances) { $script:maxInstances = $n }
+    if ($n -gt 1) { $script:duplicate = $true }
+}
+
 $t0 = (Get-Date).AddSeconds(-2)
 if ($ScriptTime) {
     $trace = Join-Path $run "jfg_trace.log"
@@ -37,12 +66,18 @@ if ($ScriptTime) {
 foreach ($s in (($Shots -split ",") | ForEach-Object { [int]$_ } | Sort-Object)) {
     $wait = $s - ((Get-Date) - $t0).TotalSeconds
     if ($wait -gt 0) { Start-Sleep -Milliseconds ([int]($wait * 1000)) }
-    if (-not (Get-Process JFGRecompiled -ErrorAction SilentlyContinue)) { "process gone at $s s"; break }
-    & powershell -ExecutionPolicy Bypass -File $winshot (Join-Path $out "shot_${stamp}_$s.png")
+    Sample-Instances
+    if (-not (Get-Process -Id $gamePid -ErrorAction SilentlyContinue)) { "process gone at $s s"; break }
+    & powershell -ExecutionPolicy Bypass -File $winshot (Join-Path $out "shot_${stamp}_$s.png") -ProcessId $gamePid
 }
 $wait = $Seconds - ((Get-Date) - $t0).TotalSeconds
 if ($wait -gt 0) { Start-Sleep -Milliseconds ([int]($wait * 1000)) }
-if (Get-Process JFGRecompiled -ErrorAction SilentlyContinue) { "RUNNING after $Seconds s - stopping"; Stop-Process -Name JFGRecompiled -Force }
+Sample-Instances
+if (Get-Process -Id $gamePid -ErrorAction SilentlyContinue) { "RUNNING after $Seconds s - stopping pid $gamePid"; Stop-Process -Id $gamePid -Force }
 else { "process ended before $Seconds s" }
 Start-Sleep -Seconds 1
+"max_instances_seen=$maxInstances"
 "log: $log"
+if ($duplicate) { "RUN_VALID=0 (more than one JFGRecompiled.exe running during the run)"; exit 5 }
+"RUN_VALID=1"
+exit 0

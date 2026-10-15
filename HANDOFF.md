@@ -729,7 +729,23 @@ Der vollständige Text dieses Tasks steht unverändert unten. Stand und Messunge
 
 Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über HANDOFF.md und RECOMP.md im GitHub-Repo zurückmelden.
 
-## Last result (level dispatcher review, 2026-10-15, WIP): trampoline + loader + 0x5D/0x5C proven, 0x16D target open
+## Last result (process investigation, 2026-10-15, WIP): double start is real, harness now refuses and binds PID
+
+- **Commit(s):** the commit that contains this line (`git log -1`).
+- **Proven:** two JFGRecompiled.exe processes started at 17:29:09 (PIDs 48780 and 32160, 0.3 s apart), same exe (linked
+  17:29:08), both crashed at the same spot in jfg_change_level (the ra-8 read with ra = 0, fixed later).
+- **Not proven:** who started the second process (no process-creation audit). Norton: no event shows blocking or killing;
+  Norton's activity log not checked; Norton not disabled.
+- **Harness fix (tools/run_capture.ps1, shot_window.ps1, test_debug_start.ps1):** refuses to start while another instance
+  runs (exit 3), binds to its own PID, samples instance count, stops only its PID, screenshots its PID, takes the log path
+  from its own output, and marks runs with overlapping instances invalid (RUN_VALID=0, exit 5). Verified: refusal with one
+  instance running; normal run RUN_VALID=1 with max_instances_seen=1.
+- **Consequence:** all runs before 19:00 may be mixed; timing, reproducibility and 60 Hz results from those runs are not
+  reliable. Nothing measured earlier is accepted until repeated with RUN_VALID=1.
+- **Open:** repeat the required measurements with the new harness; check Norton's activity log if the user wants Norton
+  ruled in or out; identify the origin of the second 17:29 launch if it recurs (add process-creation auditing).
+
+## Previous Last result (level dispatcher review, 2026-10-15, WIP): trampoline + loader + 0x5D/0x5C proven, 0x16D target open
 
 - **Commit(s):** the commit that contains this line (`git log -1`).
 - **0x80054530 = TrapDanglingJump** (src/hasm/ido/trapDanglingJump.s). Runtime overlay trampoline: reads ra-8 (the JAL),

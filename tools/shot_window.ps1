@@ -1,6 +1,7 @@
 # Saves a screenshot of the JFGRecompiled window (also when it is covered) via PrintWindow(PW_RENDERFULLCONTENT).
-# Usage: powershell -ExecutionPolicy Bypass -File tools\shot_window.ps1 out.png
-param([string]$Out)
+# Usage: powershell -ExecutionPolicy Bypass -File tools\shot_window.ps1 out.png [-ProcessId <pid>]
+# With -ProcessId only that process's window is captured (run_capture.ps1 passes the PID it started).
+param([string]$Out, [int]$ProcessId = 0)
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System;
@@ -12,7 +13,11 @@ public static class Win {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
 }
 "@
-$p = Get-Process JFGRecompiled -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+if ($ProcessId -gt 0) {
+    $p = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+} else {
+    $p = Get-Process JFGRecompiled -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+}
 if (-not $p) { "no JFGRecompiled window"; exit 1 }
 # Without DPI awareness, at >100% display scaling the rect is in logical pixels and only the
 # top-left part of the (physical-size) window content is captured, which looks like a zoomed picture.

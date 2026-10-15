@@ -34,11 +34,18 @@ for ($n = 1; $n -le $Runs; $n++) {
         -NoConsole -ScriptTime -ExtraArgs "--jfg-level $Level" `
         -Env "JFG_HEARTBEAT=1;JFG_TRACE_LEVEL=1;JFG_TRACE_GAMEPLAY=1;JFG_INPUT_SCRIPT=$script"
     $after = Get-SaveHashes
-    $stderrLog = Get-ChildItem (Join-Path $outDir "run_*.log") | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    Copy-Item $stderrLog.FullName (Join-Path $outDir "$tag.stderr.log") -Force
+    # Only this run's files: the log path and PID come from run_capture.ps1's own output (not "newest run_*.log").
+    $captureText = @($capture)
+    $logLine = $captureText | Where-Object { $_ -match "^log: (.+)$" } | Select-Object -Last 1
+    $pidLine = $captureText | Where-Object { $_ -match "^RUN_PID=(\d+)" } | Select-Object -First 1
+    $validLine = $captureText | Where-Object { $_ -match "^RUN_VALID=" } | Select-Object -Last 1
+    if (-not $logLine -or -not $pidLine) { Write-Host "run $n : no PID/log from run_capture"; $overall = 2; continue }
+    $ownLog = ($logLine -replace "^log: ", "").Trim()
+    Copy-Item $ownLog (Join-Path $outDir "$tag.stderr.log") -Force
     Copy-Item (Join-Path $root "build-cmake\run-jfg\jfg_trace.log") (Join-Path $outDir "$tag.trace.log") -Force
     $trace = Get-Content (Join-Path $outDir "$tag.trace.log")
     $err = @()
+    if ($validLine -ne "RUN_VALID=1") { $err += "run invalid: $validLine" }
 
     # 1. redirect and level
     $redir = $trace | Select-String -Pattern "JFG_LEVEL" | ForEach-Object { $_.Line }
