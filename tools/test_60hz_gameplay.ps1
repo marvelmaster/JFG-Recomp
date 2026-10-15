@@ -11,7 +11,7 @@ foreach ($value in $modes) {
     & powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\test_mouse_aim.ps1" `
         -Seconds 128 -Shots '109,112,115,116,117,118,123' `
         -Tail '110000:UP:1500,116000:A:1000,122000:RMB+LMB:800' `
-        -Env "JFG_60HZ_GAMEPLAY=$value;JFG_TRACE_GAMEPLAY=1"
+        -Env "JFG_60HZ_GAMEPLAY=$value;JFG_TRACE_GAMEPLAY=1;JFG_TRACE_LOOP=1"
     if ($LASTEXITCODE -ne 0) { throw "Capture failed for mode $value" }
     $trace = Join-Path $root "runlogs\gameplay_compare_$value.log"
     Copy-Item -LiteralPath "$root\build-cmake\run-jfg\jfg_trace.log" -Destination $trace

@@ -714,7 +714,13 @@ _Partial. "Done when" is NOT met. Details in `decomp/docs/RECOMP.md` (entry 2026
     tests, input-latency (TEST 10), long-run tests (TEST 11), CURRENT STATUS update.
 - **Deviations from the plan and why:** only the scheduler/VI part was addressed. The rest was not started, because the
   60 Hz bottleneck (render/present, not scheduler) has to be found first.
+- **Second step (WIP, same branch, see `git log -2`):** loop timing added (`JFG_TRACE_LOOP=1`, env-gated, main.cpp).
+  Five Goldwood runs (3 OFF, 2 ON) in RECOMP.md "late afternoon" entry. Result: ON and OFF show the same loop period in
+  each state. B (viFrameSync wait) is quantised to VI periods; A (game + DL build) is about one VI in the fast state.
+  Two states with the same exe (about 33 ms vs about 67 ms per iteration), cause unknown. Not yet split: game CPU vs
+  blocking in osRecvMesg and RT64 processDisplayLists/present. That needs patches in lib/ (`lib-patches`), not done yet.
 - **Open questions for the planner:**
+  - What causes the fast/slow state switch with an unchanged binary? It decides whether any 60 Hz number is trustworthy.
   - Is 60 updates/s a realistic target on this hardware? Current data says the render/present path limits both modes to about 24/s.
   - Should the next step be profiling the render path, or should 60 Hz be dropped to a documented limitation?
 

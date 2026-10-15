@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <algorithm>
 #include <cassert>
@@ -686,6 +687,13 @@ extern "C" int jfg_60hz_enabled() {
     return jfg_60hz_active.load(std::memory_order_relaxed);
 }
 
+// Loop timing for JFG_TRACE_LOOP=1 (steady clock, microseconds). A = joyRead -> viFrameSync entry (game logic and
+// display list build). B = viFrameSync entry -> next joyRead (sync, swap, retrace waits and the short loop tail).
+static double jfg_loop_last_joy_us = 0.0, jfg_loop_last_vi_us = 0.0;
+static double jfg_loop_now_us() {
+    return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 extern "C" void jfg_gameplay_tick(uint8_t* rdram, recomp_context* ctx) {
     bool enabled = false;
     try {
@@ -695,6 +703,12 @@ extern "C" void jfg_gameplay_tick(uint8_t* rdram, recomp_context* ctx) {
     static const char* forced = std::getenv("JFG_60HZ_GAMEPLAY");
     if (forced) enabled = std::strcmp(forced, "1") == 0;
     jfg_60hz_requested.store(enabled, std::memory_order_relaxed);
+    static const bool trace_loop = std::getenv("JFG_TRACE_LOOP") != nullptr;
+    if (trace_loop) {
+        const double t = jfg_loop_now_us();
+        if (jfg_loop_last_vi_us != 0.0) jfg_logf("JFG_LOOP B_us=%.0f on=%d\n", t - jfg_loop_last_vi_us, enabled ? 1 : 0);
+        jfg_loop_last_joy_us = t;
+    }
     static const bool trace = std::getenv("JFG_TRACE_GAMEPLAY") != nullptr;
     if (!trace) return;
     static uint64_t frame_number = 0;
@@ -727,6 +741,12 @@ static uint8_t jfg_vi_saved[3] = { 2, 0, 1 }; // 30 Hz values captured on enable
 extern "C" void jfg_frame_sync_limit(uint8_t* rdram, recomp_context* ctx) {
     const bool want = jfg_60hz_requested.load(std::memory_order_relaxed);
     const bool active = jfg_60hz_active.load(std::memory_order_relaxed);
+    static const bool trace_loop = std::getenv("JFG_TRACE_LOOP") != nullptr;
+    if (trace_loop) {
+        const double t = jfg_loop_now_us();
+        if (jfg_loop_last_joy_us != 0.0) jfg_logf("JFG_LOOP A_us=%.0f on=%d\n", t - jfg_loop_last_joy_us, active ? 1 : 0);
+        jfg_loop_last_vi_us = t;
+    }
     // Save the 30 Hz adaptive state on enable and restore it exactly on disable (not a fixed value).
     if (want && !active) {
         jfg_vi_saved[0] = MEM_BU(0, (gpr)kViMinFrames);

@@ -28,8 +28,10 @@ Not yet tried by a human with real mouse/keyboard; audio never listened to.
 - So **60 updates/s was not reached stably** on these runs and the mode gives no update-rate gain over 30 Hz here.
   The earlier "delta=1 / ~16.7 ms" claim (12:19) was not reproduced. The game timer runs at the same speed in both
   modes (about 7640 VI ticks per 128 s).
-- This is NOT yet a hardware limit: the render/present/scheduler split per frame has not been profiled. Next step is
-  per-iteration profiling (OFF vs ON, at least 3 runs each) to separate game CPU time from wait and present time.
+- This is NOT yet a hardware limit. Loop timing (JFG_TRACE_LOOP, "late afternoon" entry): OFF and ON show the same loop
+  period in each state; viFrameSync's final wait (B) is quantised to whole VI periods; the game plus display-list part
+  (A) is about one VI in the fast state. Fast and slow states occur with the same binary; their cause is unknown.
+  Still not separated: game CPU vs blocking inside A, and RT64 processDisplayLists / present waits.
 - Fixed in WIP: adaptive VI minimum now restored exactly on disable (was a fixed 2); mode changes only at viFrameSync.
   OFF<->ON toggling, scene and pause changes are not yet tested.
 - Not validated: XYZ speed, jump, animation, timers, camera, particles, cutscenes, audio (not listened to), enemy AI,
@@ -702,3 +704,35 @@ Findings:
   - Option stays Experimental, default OFF.
 - Open: profile CPU/GPU frame time at 60 Hz; verify OFF <-> ON toggles; remaining audit items (animation, physics,
   camera, particles, cutscenes, audio, enemy AI); input-latency test (TEST 10); long-run tests (TEST 11).
+
+## 2026-10-15 (late afternoon): loop timing, first per-iteration budget (Codex)
+- New, env-gated: JFG_TRACE_LOOP=1 (src/main/main.cpp). Per loop iteration, steady clock, microseconds:
+  A = joyRead entry -> viFrameSync entry (game logic + display list build + anything that blocks in between),
+  B = viFrameSync entry -> next joyRead (sync, swap, retrace waits, short loop tail: main.c:729-738 clamps delayDat to 6).
+  tools/test_60hz_gameplay.ps1 now sets JFG_TRACE_LOOP=1. No RT64 or libultra instrumentation yet.
+- Five runs, Goldwood route, 128 s script time. Logs: runlogs/loop_off_{1,2,3}_trace.log, runlogs/loop_on_{1,2}_trace.log
+  (runlogs/ is git-ignored). Medians/p95 in ms:
+
+  | Run | Mode flag | Iterations | A med / p95 | B med / p95 | Delta counts |
+  |---|---|---|---|---|---|
+  | OFF 1 | on=0 | 3475 | 17.0 / 34.0 | 16.5 / 18.0 | d2 2770, d3 691 |
+  | OFF 2 | on=0 | 1770 | 33.6 / 67.2 | 33.3 / 34.4 | d4 1439, d6 322 |
+  | OFF 3 | on=0 | 1770 | 33.6 / 67.0 | 33.3 / 34.3 | d4 1439, d6 323 |
+  | ON 1 | on=1 (1769 of 1770) | 1770 | 33.6 / 67.1 | 33.3 / 34.4 | d4 1438, d6 322 |
+  | ON 2 | on=1 (1769 of 1770) | 1770 | 33.5 / 67.1 | 33.4 / 34.5 | d4 1438, d6 323 |
+
+- Findings (facts from these runs):
+  - The 60 Hz flag IS active in ON runs (on=1), but the loop period is the same as in the OFF runs of the same state.
+    The 60 Hz mode does not change the loop timing in these runs.
+  - Two states occur with the same binary: a fast state (OFF 1: about 33 ms per iteration, delta mostly 2) and a slow
+    state (OFF 2/3, ON 1/2: about 67 ms, delta mostly 4). The earlier 1751-update run was in the slow state. The cause of
+    the switch is NOT known. It is not explained by the mode flag or by the build (OFF 1 and OFF 2 used the same exe).
+  - B is quantised to whole VI periods: about 16.5 ms (one VI) in the fast state, about 33 ms (two VI) in the slow state.
+    So viFrameSync's final wait is paced by a VI-locked event, not by game logic.
+  - A median is already about one VI (17 ms) in the fast state. For 60 Hz the iteration needs A < 16.7 ms, and A has not
+    been split yet into game CPU time versus blocking (osRecvMesg / RT64 submission / present). That split is the open part.
+- Interpretation NOT yet made. Not a hardware limit, and not yet a scheduler-only problem. The next step is to instrument
+  the blocking time inside osRecvMesg (lib/N64ModernRuntime/ultramodern/src/mesgqueue.cpp, a submodule file, so the change
+  goes through lib-patches) and the RT64 processDisplayLists / present waits (lib/rt64/src/hle/rt64_application.cpp:469),
+  then repeat OFF and ON in both states.
+- Mode switch timing and the OFF<->ON toggle are still untested; the fast/slow switch needs a cause before any 60 Hz claim.
