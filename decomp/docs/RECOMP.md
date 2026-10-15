@@ -1,6 +1,6 @@
 # Static recompilation (Windows build track)
 
-## CURRENT STATUS (2026-10-15 night) - read this first
+## CURRENT STATUS (2026-10-16) - read this first
 Everything below this section is the chronological log (oldest first); the newest entries are at the end.
 
 **Fast menu-free Goldwood start (2026-10-15 night, opt-in, default off, entry "night: fast start"):**
@@ -30,11 +30,10 @@ optional free mouse camera (General tab "Mouse Camera", default off), JFG texts 
 Not yet tried by a human with real mouse/keyboard; audio never listened to.
 
 **Open problems (priority order)**
-1. Character models from side/front views: some poses broken (legs like stacked slices, folded knees/shoulder).
-   Triangle-count decoding bug in the RT64 JFG adapter is fixed (back view correct). CPU reconstruction from the
-   game's joint data is correct from all 8 views, so the remaining bug is in how RT64 reads the matrices at draw
-   time (wrong one of the two matrix buffers = one frame off, or fixed-point decoding). Next: dump the decoded
-   matrices for Juno and compare with the CPU values of the same frame. See entries 10:15 and 10:40.
+1. FIXED 2026-10-16: "sliced" character models (Juno). Cause: RT64 created one projection per F3DJFG vertex load;
+   with aspect AUTO some limb projections got the widescreen x adjustment and others (no own draws, skipped) did not.
+   Fix in lib/rt64 setVertexJFG (lib-patches/rt64.patch): one shared ADJUST projection for perspective JFG draws.
+   See the dated entry "sliced character models".
 2. Rare freeze during the Goldwood landing cutscene (~84-99 s after start, process alive, frame frozen);
    0/9 and 1/5 runs with recent builds. Tool ready: tools\stackdump\hang_watch.ps1. See entry 03:52.
 3. Input lag: ~33-50 ms is the original game loop (input read -> shown next game frame at 20-30 fps); the port adds
@@ -1313,3 +1312,90 @@ The gameplay reaction is about 15-20 ms shorter with 60 Hz. Visible latency on t
 HUD and camera checked on the 60 Hz screenshot runlogs/shot_1015_225523189_3.png (HUD complete, camera behind Juno).
 Relative deviations 60 vs 30 Hz: walk -0.04 %, game time 0 %, walk-cycle period 0 %, texture scroll -0.2 % (after
 fix; +100 % before), cutscene sequence -0.25 %, jump apex +6.2 % (vs 63.2) / +21.6 % (vs 55.2), airtime +6.4 % / +13.4 %.
+
+
+## 2026-10-15 23:41: exact-frame skeletal evidence, upstream investigation
+- Starting HEAD a263116. No 60 Hz physics changes. Repro: `--jfg-test-start goldwood`,
+  `JFG_60HZ_GAMEPLAY=0;JFG_NO_AUDIO=1;JFG_INPUT_SCRIPT=200:UP:8000;JFG_CAPTURE_DL=681`.
+- New temporary opt-in capture copies RSPProcess output and actual bound input/index/matrix GPU buffers
+  before/after the workload draws, plus resolved GPU color target on the SAME command list, then maps after
+  its completion fence. Snapshot identity carries DL/workload/present/weight. No screenshot timing inference.
+- Valid run run_1015_233710402.log (one PID, RUN_VALID=1): DL681/workload684/present346, interpolation weight .5,
+  7956 vertices, 392 world slots. Artifacts retained locally under runlogs/mesh_681_233710 (not committed).
+- GPU color target visibly shows broken Juno and correct Magnus. Juno selection by recorded matrix addresses
+  0x300908..0x301388: 1506 vertices / 502 triangles. GPU screen output agrees with the exact shader calculation
+  from read-back raw pos, velocity, world/viewprojection indices, matrices and viewport to 1.34e-5 pixels.
+  GPU world transforms also byte-equal CPU transforms; inputs/outputs equal before/after draw execution.
+- IMPORTANT correction: diagnostic rendering of SAME-FRAME Juno positions and actual face indices also shows
+  the sliced body. Earlier references to a coherent RT64 CPU model are not sufficient to exclude an earlier
+  incorrect stage. Current evidence directs investigation upstream; no depth/culling or lifetime fix justified.
+- Initial GPU readback exposed a separate null dereference in plume D3D12 copyTextureRegion:
+  setSamplePositions(dstLocation.texture) dereferenced null for buffer destinations. Selecting the source
+  texture for texture-to-buffer copies fixes the diagnostic crash (build exit0). Must package if retained.
+- One subsequent test was invalid (two processes, access denied); discarded. Later valid single-process
+  runs succeeded. Full JFG_DUMP_TRIS_DL stderr output can stall the capture; use binary snapshot instead.
+
+## 2026-10-16: "sliced" character models - root cause in RT64 projection/aspect handling, fixed (Claude)
+Labels: [Code] source; [Trace] measured on the exact same display list (JFG_CAPTURE_DL capture: CPU arrays, GPU
+buffers read back after the draw, RDRAM snapshot, command log); RUN_VALID=1 and max_instances_seen=1 for all runs.
+
+### Symptom and repro
+- Juno (player, ROM prop 220, 21 joints) drawn as horizontally shifted "slices" in side and front views; Magnus correct.
+- Repro: `--jfg-test-start goldwood`, JFG_60HZ_GAMEPLAY=0, JFG_NO_AUDIO=1, JFG_INPUT_SCRIPT=200:UP:8000, screenshot at
+  12 s (Magnus dialogue, side view). Capture of the same frame: JFG_CAPTURE_DL=681 (main pass; the even DL before it is a
+  64x64 off-screen pass) -> build-cmake/run-jfg/jfg_capture_681, jfg_commands_681.txt, jfg_rdram_681.bin.
+- Note: an earlier CPU render (2026-10-15 night) that looked coherent came from a different frame (walking pose).
+  On the exact same frame RT64's CPU-side clip positions draw the same slices as the GPU; the conclusion "error after
+  the RSP stage" from that render was wrong.
+
+### Pipeline, first wrong value  [Trace]
+| Stage | Check | Result |
+|---|---|---|
+| ROM model / vertex input | 638 vertices (cpu_pos) vs JFG Forge model of prop 220, joint per vertex (rigid_matrix_assignments) vs matrix address of each vertex load | 0 errors |
+| Triangles | 502 Juno triangles (T commands, faceIndices CPU and GPU) vs ROM triangle order | 0 errors |
+| Game joint matrices (RDRAM, 0x300908 + joint*64) | bone hierarchy: parent x local translation == joint origin | max error 3e-4; world-space pose rendered from them is a coherent Juno (front/side/top) |
+| RT64 matrix decode | F3DJFG raw matrix vs RDRAM s15.16 | max 4.8e-6 (rounding) |
+| Combination with slot 0 | M0_i = inv(raw_i) x combined_i for all 34 Juno joint loads | one identical M0 (camera x perspective) |
+| CPU clip (posTransformed) | expected ROM vertex x joint x M0 vs cpu_clip for all 1506 triangle corners | 0 deviations (rel 1.9e-6) |
+| GPU vertex output (RSPProcessCS dstPos / screen buffer, read back after the draw) vs CPU clip | per corner | y and w equal; **x differs for 1023 of 1506 corners: GPU ndc x = CPU ndc x * 0.75** |
+So the first wrong value is the GPU x of part of Juno's vertices: some limbs got RT64's widescreen aspect adjustment
+(x * 1/aspectRatioScale = 0.75 for 4:3 -> 16:9, ar_option "Expand") and others not.
+
+### Root cause  [Code + Trace]
+1. RSP::setVertexJFG loaded `matrixCommon(identity, projMask | loadMask)` for EVERY F3DJFG vertex load (the real clip
+   transform is the combined matrix in the world transform). Each load therefore created a new RT64 projection
+   (addCurrentProjection; 392 view-projection entries in DL 681).
+2. Their transform group has aspect mode G_EX_ASPECT_AUTO. ProjectionProcessor::processScene decides AUTO per
+   projection from that projection's drawn area ("covers the whole width and is wider than tall").
+3. Projections without draw calls (`proj.scissorRect.isNull()`) are skipped and keep the unadjusted matrix. Character
+   seams are drawn after two consecutive vertex loads (two joints); the first load's projection has no draw of its own,
+   is skipped, but its vertices are used by the next triangles. Captured: viewProj indices alternate between
+   identity (unadjusted) and diag(0.75,1,1,1); wrong corners all reference the unadjusted ones.
+   -> limbs of one model rendered with different horizontal scales = "slices". Magnus/level looked fine because their
+   vertex loads are mostly followed by their own triangles.
+
+### Fix (lib/rt64 src/hle/rt64_rsp.cpp setVertexJFG, rt64_rsp.h jfg.viewProjAspect; lib-patches/rt64.patch)
+- A perspective combined matrix (clip w depends on the position: |m[0][3]|+|m[1][3]|+|m[2][3]| > 0) belongs to the
+  3D scene: all such loads of a task share ONE identity projection whose view-projection group has aspect mode
+  G_EX_ASPECT_ADJUST (no per-load projection, nothing left unprocessed). Non-perspective (2D) loads keep the previous
+  behaviour (new AUTO projection per load). A new projection is still created when the aspect class changes, when the
+  current projection is not identity, and on viewport changes (setVertexCommon).
+- No model-, bone- or character-specific code; no matrix clamp; interpolation unchanged.
+- Off-screen passes keep their own handling: the 64x64 pass (DL 760) and a 160x160-viewport pass stay at x scale 1.0
+  (RT64 applies the aspect adjustment only to the main framebuffer), as before.
+
+### Diagnostics kept (env-gated, default off)
+- JFG_CAPTURE_DL=<dl>: command log (M/V/T lines), RDRAM snapshot, CPU arrays and GPU buffer readbacks of one display
+  list (lib/rt64 rt64_jfg_capture.h, rt64_workload_queue.cpp, rt64_gbi_f3djfg.cpp). Removed: JFG_DUMP_TRIS_DL.
+- tools/check_jfg_capture.py <dl>: per model and viewport, one common GPU x scale and equal y (NDC) and w.
+- tools/test_skeletal_mesh.ps1: fast start, C-Up jump, turn, run, screenshots at 1/2/5/13 s, capture check, saves.
+
+### Results (final build, all RUN_VALID=1, max_instances_seen=1, saves unchanged)
+| Test | Result |
+|---|---|
+| Capture check DL 681 (Magnus scene), 761 (side view), 760 (64x64 pass), 1481 (60 Hz) | PASS: Juno 1506/3012 corners one scale 0.75; Magnus, other models, level one scale per viewport |
+| Repro screenshot 12 s (runlogs/shot_1015_235935728_12.png) | Juno coherent from the side (legs, arms, head), Magnus unchanged |
+| test_skeletal_mesh.ps1 30 Hz x3, 60 Hz x1 | PASS (captures); screenshots: jump, turn, run from behind, side views, reflection in water, HUD |
+| Title screen (normal start, 33 s) | Vela (girl model) coherent; 4:3 frame with blurred sides unchanged from the baseline |
+| test_menu_free_start fast x1, normal x1 | PASS |
+Not checked: other levels, multiplayer split screen, enemies; the 160x160 square-viewport pass was not identified.

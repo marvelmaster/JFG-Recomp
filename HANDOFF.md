@@ -16,7 +16,11 @@ Rules
 
 ---
 
-## Open task (aktiv): Debug quick start: intro skip, cutscene skip, direct level load (2026-10-15)
+## Open task (done 2026-10-16, see Last result): Same-frame skeletal mesh diagnosis (2026-10-15 23:35)
+
+Continue from a263116. First close the same-frame evidence gap: capture the GPU framebuffer and actual transform output/inputs for one identified display-list workload. Compare a concrete broken Juno triangle against CPU and Magnus in the same frame. Fix only the first proven incorrect stage; no character special cases. No further 60 Hz physics work. Finish with regressions, reproducible lib patches, build, documentation and push to jfg/main. User explicitly authorizes proceeding without planner review.
+
+## Previous task: Debug quick start: intro skip, cutscene skip, direct level load (2026-10-15)
 
 - **Status:** Schneller menüfreier Goldwood-Start ist Standard (`--jfg-test-start goldwood`, 0x5C ca. 0,6 s nach dem ersten
   Spielframe; `goldwood-full` = alte Sequenz als Diagnose; 2026-10-15 night). Offen: Done-when 2 (Intro-Skip) und 3
@@ -731,7 +735,29 @@ Der vollständige Text dieses Tasks steht unverändert unten. Stand und Messunge
 
 Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über HANDOFF.md und RECOMP.md im GitHub-Repo zurückmelden.
 
-## Last result (60 Hz gameplay, 2026-10-15 late night, WIP): runtime fix -> real 60 updates/s; jump still off
+## Last result (skeletal meshes, 2026-10-16): "sliced" character models fixed in RT64
+
+- **Commit(s):** the commit that contains this line (`git log -1`), on jfg/main.
+- **Build:** `build_jfg.bat build` exit 0. lib-patches/rt64.patch regenerated and checked: applies cleanly to the pinned
+  rt64 6f1c2d9. No recompiler hook changed (generator not affected).
+- **Repro:** fast start, 30 Hz, UP 0.2-8.2 s, Magnus dialogue at 12 s: Juno in slices; capture of the same frame (DL 681).
+- **Pipeline (same frame) [Trace]:** ROM vertices, joint assignment, triangles, RDRAM joint matrices (coherent pose),
+  RT64 matrix decode, slot-0 combination and CPU clip positions are all correct (0 deviations over 1506 corners).
+  First wrong value: GPU vertex x for 1023/1506 corners = CPU ndc x * 0.75 (widescreen adjustment on some limbs only).
+- **Root cause [Code]:** setVertexJFG loaded an identity projection per vertex load -> one RT64 projection per load;
+  aspect AUTO decided per projection; projections without own draws (first of two joint loads before seam triangles)
+  were skipped by the ProjectionProcessor and stayed unadjusted.
+- **Fix:** perspective JFG loads share one identity projection with aspect ADJUST; 2D loads unchanged. Files:
+  lib/rt64 src/hle/rt64_rsp.cpp, src/hle/rt64_rsp.h (via lib-patches/rt64.patch). Matrix stack, transform index,
+  vertex cache, batching and buffer lifetime were not involved (all checked equal on the same frame).
+- **Tests:** tools/test_skeletal_mesh.ps1 (new) 30 Hz x3 + 60 Hz x1 PASS; tools/check_jfg_capture.py (new) PASS on DL
+  681/760/761/1481; Juno jump/turn/run/side views and Magnus correct, Vela on the title screen correct, HUD/world/camera
+  unchanged; fast start and normal start PASS; saves unchanged. JFG_NO_AUDIO=1 (WASAPI box on this PC).
+- **Diagnostics kept:** JFG_CAPTURE_DL (env-gated). Removed: JFG_DUMP_TRIS_DL.
+- **Open / risks:** other levels, multiplayer split screen and enemies not checked; a 160x160-viewport pass (no Z) stays
+  unadjusted as before, not identified; 60 Hz jump issue unchanged (paused).
+
+## Previous Last result (60 Hz gameplay, 2026-10-15 late night, WIP): runtime fix -> real 60 updates/s; jump still off
 
 - **Commit(s):** 75b11c4 (WIP) and the commit that contains this line (`git log -2`), on jfg/main.
 - **Build:** `build_jfg.bat build` exit 0. **Generator:** regular WSL pipeline with the repo toml reproduces all 60
@@ -990,18 +1016,8 @@ _Partial. "Done when" is NOT met. Details in `decomp/docs/RECOMP.md` (entry 2026
 _(either side; delete when answered)_
 
 ## History
+- 2026-10-16 00:10 Sliced character models fixed (RT64 per-load projection + aspect AUTO); new mesh test (Claude).
 - 2026-10-15 23:00 60 Hz: runtime SI requeue spin fixed (30/60 updates/s real), texture scroll fixed, A/B tools; jump still +6..22 % (Claude).
 - 2026-10-15 21:10 Fast start: direct 0x5C validated by state comparison, default `--jfg-test-start goldwood` (10/10 PASS, 0x5C in about 0.6 s game time), generator reproducible (Claude).
 - 2026-10-15 20:35 Norton-off sprint: clean single-process baseline, 0x16D resolved, menu-free `--jfg-test-start goldwood` (10/10 PASS) and `goldwood-landing` (5/5 PASS) (Claude).
 - 2026-10-15 13:00 Repo created; state: playable to Goldwood, mouse aim, optional mouse camera; 60 Hz gameplay checkbox in progress (Codex, 12:12).
-
-## Interim note (skeletal mesh task, 2026-10-15 23:20, stopped on usage limit, NOT finished)
-- Repro: `--jfg-test-start goldwood`, JFG_60HZ_GAMEPLAY=0, JFG_NO_AUDIO=1, JFG_INPUT_SCRIPT=200:UP:8000, screenshot at
-  12 s (Magnus dialogue, side view): Juno drawn as twisted "slices"; Magnus (also animated) looks correct.
-- [Trace] RT64's CPU-side vertex positions (posTransformed/posScreen, per vertex load with the combined joint matrix)
-  give a coherent Juno when rendered offline (new env-gated dump JFG_DUMP_TRIS_DL=<dl> in lib/rt64 rt64_gbi_f3djfg.cpp,
-  local only, not yet in lib-patches). So the error is after the RSP stage.
-- [Code] modifyVertex copies keep worldIndices; [Trace] disabling the transform lerp (prev/cur matching) does NOT fix it.
-- [Trace] Juno draws: omL=C8112078 (Z_CMP+Z_UPD on), geo=00812205, screen z 0.902-0.921, clip w 103-128 (plausible).
-- Next: compare GPU vertex output vs posScreen for one triangle (RT64 rsp_processor / vertex shader path), check
-  depth/culling/coverage per draw call; then fix at the first wrong stage.
