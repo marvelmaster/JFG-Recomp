@@ -696,6 +696,58 @@ extern "C" int jfg_60hz_enabled() {
     return jfg_60hz_active.load(std::memory_order_relaxed);
 }
 
+// Scheduler hooks (decomp/recomp/jfg.us.toml, generated code funcs_16.c; decomp sched.c:743-756 and 847-865).
+// __scTaskComplete(sc, t) @0x80050A58: `beq $at, $zero` with $at = (sc->frameCount < 2) (sltiu at 0x80050A54,
+// frameCount = sc+0x300). $at != 0 keeps a finished OS_SC_LAST_TASK (flags & 0x20) in sc->unkTask (sc+0x2FC) until a
+// later retrace; $at = 0 sends its done message now and clears frameCount. __scHandleRetrace @0x800506E8: `bne $at,
+// $zero` with the same condition (frameCount already incremented), reached only when sc->unkTask != 0; $at = 0 sends
+// the held message at this retrace. With 60 Hz off both hooks leave $at unchanged. JFG_TRACE_SCHED=1 logs both points.
+static bool jfg_trace_sched() {
+    static const bool enabled = std::getenv("JFG_TRACE_SCHED") != nullptr;
+    return enabled;
+}
+static double jfg_loop_now_us();
+extern "C" void jfg_sched_complete_trace(uint8_t* rdram, recomp_context* ctx) {
+    if (!jfg_trace_sched()) return;
+    const gpr t = ctx->r5;
+    jfg_logf("JFG_SCHED complete t=%.0f task=%08X state=%X flags=%X msgq=%08X frameCount=%d\n", jfg_loop_now_us(),
+        (uint32_t)t, (uint32_t)MEM_W(0x4, t), (uint32_t)MEM_W(0x8, t), (uint32_t)MEM_W(0x50, t),
+        (int32_t)MEM_W(0x300, ctx->r4));
+}
+extern "C" void jfg_sched_last_task(uint8_t* rdram, recomp_context* ctx) {
+    const bool hold = ctx->r1 != 0;
+    if (jfg_60hz_enabled()) ctx->r1 = 0;
+    if (jfg_trace_sched()) jfg_logf("JFG_SCHED last t=%.0f hold=%d sent=%d\n", jfg_loop_now_us(), hold ? 1 : 0, ctx->r1 == 0 ? 1 : 0);
+}
+// trackUpdateTextureScroll (0x80013970) adds fixed UV deltas per call with no time step. In 60 Hz mode it runs only
+// once two VIs (delayDat, 0x800A3374, the delta of this update) have accumulated, i.e. at the rate of the 30 Hz mode,
+// and at most once per update. Returns 1 to skip the call. 30 Hz mode: always runs (original behaviour).
+// JFG_TRACE_SCROLL=1 logs every call (ms = script time, run = 1 if the original ran).
+extern "C" int jfg_texture_scroll_skip(uint8_t* rdram, recomp_context*) {
+    static uint32_t acc = 0;
+    static bool last_mode = false;
+    const bool on = jfg_60hz_enabled() != 0;
+    if (on != last_mode) { acc = 0; last_mode = on; }
+    bool run = true;
+    if (on) {
+        int32_t delta = (int32_t)MEM_W(0, (gpr)(int32_t)0x800A3374);
+        acc += (uint32_t)(delta > 0 ? delta : 1);
+        if (acc >= 2) acc = (acc - 2) % 2; else run = false;
+    }
+    static const bool trace = std::getenv("JFG_TRACE_SCROLL") != nullptr;
+    if (trace) {
+        const uint64_t now = SDL_GetTicks64();
+        jfg_logf("JFG_SCROLL ms=%llu run=%d\n", (unsigned long long)(jfg_script_begin_ms ? now - jfg_script_begin_ms : 0), run ? 1 : 0);
+    }
+    return run ? 0 : 1;
+}
+
+extern "C" void jfg_sched_retrace_deferred(uint8_t* rdram, recomp_context* ctx) {
+    const bool hold = ctx->r1 != 0;
+    if (jfg_60hz_enabled()) ctx->r1 = 0;
+    if (jfg_trace_sched()) jfg_logf("JFG_SCHED retrace_held t=%.0f hold=%d sent=%d\n", jfg_loop_now_us(), hold ? 1 : 0, ctx->r1 == 0 ? 1 : 0);
+}
+
 // Loop timing for JFG_TRACE_LOOP=1 (steady clock, microseconds). A = joyRead -> viFrameSync entry (game logic and
 // display list build). B = viFrameSync entry -> next joyRead (sync, swap, retrace waits and the short loop tail).
 static double jfg_loop_last_joy_us = 0.0, jfg_loop_last_vi_us = 0.0;
@@ -898,13 +950,29 @@ static constexpr int32_t kViCounter = (int32_t)0x800FECAB;
 static constexpr int32_t kViStable = (int32_t)0x800FECAD;
 static uint8_t jfg_vi_saved[3] = { 2, 0, 1 }; // 30 Hz values captured on enable; reset values until then
 
+// JFG_TRACE_LOOP=1: W = time the game thread spends in rcpWaitDP (waiting for the previous frame's RDP done message),
+// measured from rcpWaitDP entry to the entry of mainUpdateZBCheck, the next call in the main loop.
+static double jfg_loop_waitdp_us = 0.0;
+extern "C" void jfg_loop_waitdp_begin(uint8_t*, recomp_context*) {
+    static const bool trace_loop = std::getenv("JFG_TRACE_LOOP") != nullptr;
+    if (trace_loop) jfg_loop_waitdp_us = jfg_loop_now_us();
+}
+extern "C" void jfg_loop_waitdp_end(uint8_t*, recomp_context*) {
+    static const bool trace_loop = std::getenv("JFG_TRACE_LOOP") != nullptr;
+    if (trace_loop && jfg_loop_waitdp_us != 0.0) {
+        const double t = jfg_loop_now_us();
+        jfg_logf("JFG_LOOP W_us=%.0f t=%.0f\n", t - jfg_loop_waitdp_us, t);
+        jfg_loop_waitdp_us = 0.0;
+    }
+}
+
 extern "C" void jfg_frame_sync_limit(uint8_t* rdram, recomp_context* ctx) {
     const bool want = jfg_60hz_requested.load(std::memory_order_relaxed);
     const bool active = jfg_60hz_active.load(std::memory_order_relaxed);
     static const bool trace_loop = std::getenv("JFG_TRACE_LOOP") != nullptr;
     if (trace_loop) {
         const double t = jfg_loop_now_us();
-        if (jfg_loop_last_joy_us != 0.0) jfg_logf("JFG_LOOP A_us=%.0f on=%d\n", t - jfg_loop_last_joy_us, active ? 1 : 0);
+        if (jfg_loop_last_joy_us != 0.0) jfg_logf("JFG_LOOP A_us=%.0f on=%d t=%.0f\n", t - jfg_loop_last_joy_us, active ? 1 : 0, t);
         jfg_loop_last_vi_us = t;
     }
     // Save the 30 Hz adaptive state on enable and restore it exactly on disable (not a fixed value).

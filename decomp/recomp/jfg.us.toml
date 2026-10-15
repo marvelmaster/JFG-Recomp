@@ -114,12 +114,17 @@ text = "{ extern void jfg_trap_trace(uint8_t*, recomp_context*); jfg_trap_trace(
 [[patches.hook]]
 func = "__scHandleRetrace"
 before_vram = 0x800506E8
-text = "{ extern int jfg_60hz_enabled(void); if (jfg_60hz_enabled()) ctx->r1 = 0; }"
+text = "{ extern void jfg_sched_retrace_deferred(uint8_t*, recomp_context*); jfg_sched_retrace_deferred(rdram, ctx); }"
+
+[[patches.hook]]
+func = "__scTaskComplete"
+before_vram = 0x80050A08
+text = "{ extern void jfg_sched_complete_trace(uint8_t*, recomp_context*); jfg_sched_complete_trace(rdram, ctx); }"
 
 [[patches.hook]]
 func = "__scTaskComplete"
 before_vram = 0x80050A58
-text = "{ extern int jfg_60hz_enabled(void); if (jfg_60hz_enabled()) ctx->r1 = 0; }"
+text = "{ extern void jfg_sched_last_task(uint8_t*, recomp_context*); jfg_sched_last_task(rdram, ctx); }"
 
 [[patches.hook]]
 func = "viFrameSync"
@@ -140,3 +145,23 @@ text = "{ extern void jfg_trace_level_init(uint8_t*, recomp_context*); jfg_trace
 func = "objSetupPlayers"
 before_vram = 0x8000561C
 text = "{ extern void jfg_trace_setup_players(uint8_t*, recomp_context*); jfg_trace_setup_players(rdram, ctx); }"
+
+# Trace only (JFG_TRACE_LOOP=1): time the game thread waits in rcpWaitDP for the previous frame's RDP done message
+# (entry of rcpWaitDP; entry of mainUpdateZBCheck, the call right after it in the main loop, decomp main.c:685-686).
+[[patches.hook]]
+func = "rcpWaitDP"
+before_vram = 0x8004DCB0
+text = "{ extern void jfg_loop_waitdp_begin(uint8_t*, recomp_context*); jfg_loop_waitdp_begin(rdram, ctx); }"
+
+[[patches.hook]]
+func = "mainUpdateZBCheck"
+before_vram = 0x80045914
+text = "{ extern void jfg_loop_waitdp_end(uint8_t*, recomp_context*); jfg_loop_waitdp_end(rdram, ctx); }"
+
+# 60 Hz gameplay: trackUpdateTextureScroll (decomp track.c:812) adds fixed UV deltas once per call and gets no time
+# step (main.c:688). With 60 Hz active the native side lets it run only when two VIs have passed since its last run,
+# which is the rate of the 30 Hz mode; returning at the entry skips the call. 30 Hz mode: unchanged.
+[[patches.hook]]
+func = "trackUpdateTextureScroll"
+before_vram = 0x80013970
+text = "{ extern int jfg_texture_scroll_skip(uint8_t*, recomp_context*); if (jfg_texture_scroll_skip(rdram, ctx)) return; }"
