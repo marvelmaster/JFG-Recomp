@@ -1,0 +1,53 @@
+diff --git a/include/recomp.h b/include/recomp.h
+index 73f3e73..ee66904 100644
+--- a/include/recomp.h
++++ b/include/recomp.h
+@@ -92,24 +92,41 @@ typedef uint64_t gpr;
+ #define SUB32(a, b) \
+     ((gpr)(int32_t)((a) - (b)))
+ 
++#ifdef RECOMP_KSEG1_RDRAM
++// KSEG0 and KSEG1 address the same physical RAM. JFG's IPL3 checks use KSEG1.
++// Preserve the legacy address calculation for builds that do not opt in.
++// Only KSEG1 RAM (0xA0000000-0xAFFFFFFF) is folded onto KSEG0. 0xB0000000+ is the cartridge
++// (PI domain 1); it keeps its own offset (0x30000000 + ROM offset) where the JFG runtime maps a
++// copy of the ROM (direct CPU ROM reads: animseqProcessCommandList passes osRomBase to
++// animseqUpdatePath, which reads the ROM header through it).
++#define RECOMP_MEMORY_OFFSET_RAW(offset, reg) \
++    ((((reg) + (offset))) - 0xFFFFFFFF80000000)
++#define RECOMP_MEMORY_OFFSET(offset, reg) \
++    (RECOMP_MEMORY_OFFSET_RAW(offset, reg) & ~(UINT64_C(0x20000000) & \
++        (UINT64_C(0) - (uint64_t)((RECOMP_MEMORY_OFFSET_RAW(offset, reg) >> 28) == 2))))
++#else
++#define RECOMP_MEMORY_OFFSET(offset, reg) \
++    ((((reg) + (offset))) - 0xFFFFFFFF80000000)
++#endif
++
+ #define MEM_W(offset, reg) \
+-    (*(int32_t*)(rdram + ((((reg) + (offset))) - 0xFFFFFFFF80000000)))
++    (*(int32_t*)(rdram + RECOMP_MEMORY_OFFSET(offset, reg)))
+ 
+ #define MEM_H(offset, reg) \
+-    (*(int16_t*)(rdram + ((((reg) + (offset)) ^ 2) - 0xFFFFFFFF80000000)))
++    (*(int16_t*)(rdram + (RECOMP_MEMORY_OFFSET(offset, reg) ^ 2)))
+ 
+ #define MEM_B(offset, reg) \
+-    (*(int8_t*)(rdram + ((((reg) + (offset)) ^ 3) - 0xFFFFFFFF80000000)))
++    (*(int8_t*)(rdram + (RECOMP_MEMORY_OFFSET(offset, reg) ^ 3)))
+ 
+ #define MEM_HU(offset, reg) \
+-    (*(uint16_t*)(rdram + ((((reg) + (offset)) ^ 2) - 0xFFFFFFFF80000000)))
++    (*(uint16_t*)(rdram + (RECOMP_MEMORY_OFFSET(offset, reg) ^ 2)))
+ 
+ #define MEM_BU(offset, reg) \
+-    (*(uint8_t*)(rdram + ((((reg) + (offset)) ^ 3) - 0xFFFFFFFF80000000)))
++    (*(uint8_t*)(rdram + (RECOMP_MEMORY_OFFSET(offset, reg) ^ 3)))
+ 
+ #define SD(val, offset, reg) { \
+-    *(uint32_t*)(rdram + ((((reg) + (offset) + 4)) - 0xFFFFFFFF80000000)) = (uint32_t)((gpr)(val) >> 0); \
+-    *(uint32_t*)(rdram + ((((reg) + (offset) + 0)) - 0xFFFFFFFF80000000)) = (uint32_t)((gpr)(val) >> 32); \
++    *(uint32_t*)(rdram + RECOMP_MEMORY_OFFSET((offset) + 4, reg)) = (uint32_t)((gpr)(val) >> 0); \
++    *(uint32_t*)(rdram + RECOMP_MEMORY_OFFSET((offset) + 0, reg)) = (uint32_t)((gpr)(val) >> 32); \
+ }
+ 
+ static inline uint64_t load_doubleword(uint8_t* rdram, gpr reg, gpr offset) {

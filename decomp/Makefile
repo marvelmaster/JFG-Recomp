@@ -1,0 +1,560 @@
+BASENAME  = jfg
+VERSION  := us
+NON_MATCHING ?= 0
+# Libultra version might be at least J, but still labeled in the header as G for some reason.
+LIBULTRA_VERSION_DEFINE := -DBUILD_VERSION=6 -DBUILD_VERSION_STRING=\"2.0I\"
+
+# Whether to hide commands or not
+VERBOSE ?= 0
+ifeq ($(VERBOSE),0)
+  V := @
+endif
+
+PRINT = printf
+GREP  = grep -rl
+
+# Colors
+
+# Whether to colorize build messages
+COLOR ?= 1
+GCC_COLOR := -fno-diagnostics-color
+
+ifeq ($(COLOR),1)
+NO_COL  := \033[0m
+RED     := \033[0;31m
+GREEN   := \033[0;32m
+YELLOW  := \033[0;33m
+BLUE    := \033[0;34m
+PINK    := \033[0;35m
+CYAN    := \033[0;36m
+COLORIZE := -c
+GCC_COLOR :=
+endif
+
+# Common build print status function
+define print
+  @$(PRINT) "$(GREEN)$(1) $(YELLOW)$(2)$(GREEN) -> $(BLUE)$(3)$(NO_COL)\n"
+endef
+
+# Directories
+ifeq ($(VERSION),us)
+	BIN_DIRS  = assets
+	BUILD_DIR = build
+	SRC_DIR   = src
+	ASM_DIR   = asm
+else ifeq ($(VERSION),kiosk)
+	BIN_DIRS  = assets
+	BUILD_DIR = build
+	SRC_DIR   = src
+	ASM_DIR   = asm
+else
+	BIN_DIRS  = assets_$(VERSION)
+	BUILD_DIR = build_$(VERSION)
+	SRC_DIR   = src_$(VERSION)
+	ASM_DIR   = asm_$(VERSION)
+endif
+
+ifeq ($(VERSION),us)
+SRC_OVERLAYS_DIRS = $(patsubst %/,%,$(dir $(wildcard src/overlays/*/)))
+ASM_OVERLAYS_DIRS = $(patsubst %/,%,$(dir $(wildcard asm/overlays/*/)))
+ASM_OVERLAYS_DIRS += $(patsubst %/,%,$(dir $(wildcard asm/nonmatchings/overlays/*/)))
+ASM_OVERLAYS_DIRS += $(patsubst %/,%,$(dir $(wildcard asm/data/overlays/*/)))
+BIN_OVERLAYS_DIRS = $(patsubst %/,%,$(dir $(wildcard assets/overlays/*/)))
+else
+SRC_OVERLAYS_DIRS = $(patsubst %/,%,$(dir $(wildcard src_$(VERSION)/overlays_$(VERSION)/*/)))
+ASM_OVERLAYS_DIRS = $(patsubst %/,%,$(dir $(wildcard asm_$(VERSION)/overlays_$(VERSION)/*/)))
+ASM_OVERLAYS_DIRS += $(patsubst %/,%,$(dir $(wildcard asm_$(VERSION)/nonmatchings/overlays_$(VERSION)/*/)))
+ASM_OVERLAYS_DIRS += $(patsubst %/,%,$(dir $(wildcard asm_$(VERSION)/data/overlays_$(VERSION)/*/)))
+BIN_OVERLAYS_DIRS = $(patsubst %/,%,$(dir $(wildcard assets_$(VERSION)/overlays_$(VERSION)/*/)))
+endif
+
+MATH_DIR  = $(SRC_DIR)/math
+OLD_LIBULTRA_DIR = $(SRC_DIR)/libultra
+LIBULTRA_DIR = libultra
+ASM_DIRS  = $(ASM_DIR) $(ASM_DIR)/data $(ASM_DIR)/nonmatchings $(ASM_DIR)/data/libultra $(ASM_DIR)/hasm $(ASM_DIR)/libultra $(ASM_DIR)/libultra/src/flash
+HASM_DIRS = $(SRC_DIR)/hasm $(SRC_DIR)/hasm/ido $(LIBULTRA_DIR)/src/os $(LIBULTRA_DIR)/src/gu $(LIBULTRA_DIR)/src/libc $(OLD_LIBULTRA_DIR)
+LIBULTRA_SRC_DIRS  = $(LIBULTRA_DIR) $(LIBULTRA_DIR)/src
+LIBULTRA_SRC_DIRS += $(LIBULTRA_DIR)/src/debug $(LIBULTRA_DIR)/src/gu $(LIBULTRA_DIR)/src/io
+LIBULTRA_SRC_DIRS += $(LIBULTRA_DIR)/src/libc $(LIBULTRA_DIR)/src/os $(LIBULTRA_DIR)/src/sc $(LIBULTRA_DIR)/src/flash
+
+
+ifeq ($(VERSION),jpn)
+	TEMP_PAL_LIBULTRA_DIR = $(SRC_DIR)/libultra_c
+	ASM_DIRS += $(ASM_DIR)/math $(ASM_DIR)/data/math $(ASM_DIR)/data/hasm
+	ASM_DIRS += $(ASM_DIR)/data/libultra_c/src/libc $(ASM_DIR)/data/libultra_c/src/os
+	ASM_DIRS += $(ASM_DIR)/data/libultra_c/src/gu $(ASM_DIR)/data/libultra_c/src/io
+	ASM_DIRS += $(ASM_DIR)/data/libultra_c/src/flash $(ASM_DIR)/data/libultra_c/src/debug
+	ASM_DIRS += $(ASM_DIR)/libultra_c $(ASM_DIR)/libultra_c/src/flash
+	ASM_DIRS += $(ASM_DIR)/libultra_c $(ASM_DIR)/libultra_c/src
+	ASM_DIRS += $(ASM_DIR)/libultra_c/src/debug $(ASM_DIR)/libultra_c/src/gu $(ASM_DIR)/libultra_c/src/io
+	ASM_DIRS += $(ASM_DIR)/libultra_c/src/libc $(ASM_DIR)/libultra_c/src/os $(ASM_DIR)/libultra_c/src/sc $(ASM_DIR)/libultra_c/src/flash
+	LIBULTRA_SRC_DIRS += $(ASM_DIR)/libultra_c $(ASM_DIR)/libultra_c/src
+	LIBULTRA_SRC_DIRS += $(ASM_DIR)/libultra_c/src/debug $(ASM_DIR)/libultra_c/src/gu $(ASM_DIR)/libultra_c/src/io
+	LIBULTRA_SRC_DIRS += $(ASM_DIR)/libultra_c/src/libc $(ASM_DIR)/libultra_c/src/os $(ASM_DIR)/libultra_c/src/sc $(ASM_DIR)/libultra_c/src/flash
+	LIBULTRA_SRC_DIRS += $(TEMP_PAL_LIBULTRA_DIR) $(TEMP_PAL_LIBULTRA_DIR)/src
+	LIBULTRA_SRC_DIRS += $(TEMP_PAL_LIBULTRA_DIR)/src/debug $(TEMP_PAL_LIBULTRA_DIR)/src/gu $(TEMP_PAL_LIBULTRA_DIR)/src/io
+	LIBULTRA_SRC_DIRS += $(TEMP_PAL_LIBULTRA_DIR)/src/libc $(TEMP_PAL_LIBULTRA_DIR)/src/os $(TEMP_PAL_LIBULTRA_DIR)/src/sc $(TEMP_PAL_LIBULTRA_DIR)/src/flash
+endif
+
+# Files requiring pre/post-processing
+GLOBAL_ASM_C_FILES := $(shell $(GREP) GLOBAL_ASM $(SRC_DIR) $(LIBULTRA_DIR) </dev/null 2>/dev/null)
+GLOBAL_ASM_O_FILES := $(foreach file,$(GLOBAL_ASM_C_FILES),$(BUILD_DIR)/$(file).o)
+
+SRC_DIRS = $(SRC_DIR) $(SRC_OVERLAYS_DIRS) $(MATH_DIR) $(LIBULTRA_SRC_DIRS) $(OLD_LIBULTRA_DIR)
+SYMBOLS_DIR = ver/symbols
+
+TOOLS_DIR = tools
+
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+
+ifeq ($(OS),Windows_NT)
+	$(error Native Windows is currently unsupported for building this repository, use WSL instead c:)
+else ifeq ($(UNAME_S),Linux)
+	ifneq ($(filter aarch%,$(UNAME_M)),)
+		DETECTED_OS := linux-arm
+	else
+		DETECTED_OS := linux
+	endif
+else ifeq ($(UNAME_S),Darwin)
+	DETECTED_OS := macos
+endif
+
+RECOMP_DIR := $(TOOLS_DIR)/ido-recomp/$(DETECTED_OS)
+
+# Files
+
+S_FILES         = $(foreach dir,$(ASM_DIRS) $(HASM_DIRS) $(ASM_OVERLAYS_DIRS),$(wildcard $(dir)/*.s))
+C_FILES         = $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))
+BIN_FILES       = $(foreach dir,$(BIN_DIRS) $(BIN_OVERLAYS_DIRS),$(wildcard $(dir)/*.bin))
+
+O_FILES := $(foreach file,$(S_FILES),$(BUILD_DIR)/$(file).o) \
+           $(foreach file,$(C_FILES),$(BUILD_DIR)/$(file).o) \
+           $(foreach file,$(BIN_FILES),$(BUILD_DIR)/$(file).o)
+
+find-command = $(shell which $(1) 2>/dev/null)
+
+# Tools
+
+ifeq ($(shell type mips-linux-gnu-ld >/dev/null 2>/dev/null; echo $$?), 0)
+	CROSS := mips-linux-gnu-
+else ifeq ($(shell type mips64-linux-gnu-ld >/dev/null 2>/dev/null; echo $$?), 0)
+	CROSS := mips64-linux-gnu-
+else ifeq ($(shell type mips64-elf-ld >/dev/null 2>/dev/null; echo $$?), 0)
+	CROSS := mips64-elf-
+else
+# No binutil packages were found, so we have to download the source & build it.
+ifeq ($(wildcard $(TOOLS_DIR)/binutils/.*),)
+	DUMMY != $(TOOLS_DIR)/get-binutils.sh >&2 || echo FAIL
+endif
+	CROSS := $(TOOLS_DIR)/binutils/mips64-elf-
+endif
+
+AS       = $(CROSS)as
+LD       = $(CROSS)ld
+OBJCOPY  = $(CROSS)objcopy
+STRIP    = $(CROSS)strip
+VENV     = .venv
+PYTHON   = $(VENV)/bin/python3
+GCC      = gcc
+
+#Options
+CC       = $(RECOMP_DIR)/cc
+SPLAT    ?= $(PYTHON) -m splat split
+CRC      = $(TOOLS_DIR)/n64crc $(BUILD_DIR)/$(BASENAME).$(VERSION).z64 $(COLORIZE)
+
+OPT_FLAGS      = -O2
+
+MIPSISET       = -mips1
+
+DEFINES := _FINALROM NDEBUG TARGET_N64 F3DDKR_GBI
+DEFINES += VERSION_$(VERSION)
+
+VERIFY = verify
+
+ifeq ($(NON_MATCHING),1)
+	MATCHDEFS += NON_MATCHING=1
+	MATCHDEFS += AVOID_UB=1
+	VERIFY = no_verify
+	MIPSISET = -mips2
+	C_STANDARD := -std=gnu99
+else
+	MATCHDEFS += ANTI_TAMPER=1
+	C_STANDARD := -std=gnu90
+endif
+
+# DECOMP_MEASURE=1: compile the NON_MATCHING C with the exact matching-build flags,
+# so tools/match_report.py can compare each function against the original asm.
+# (The objects are for measuring only; the link is expected to fail.)
+ifeq ($(DECOMP_MEASURE),1)
+	MATCHDEFS += NON_MATCHING=1
+	VERIFY = no_verify
+endif
+
+DEFINES += $(MATCHDEFS)
+C_DEFINES := $(foreach d,$(DEFINES),-D$(d)) -D_MIPS_SZLONG=32 -DRAREDIFFS -DJFGDIFFS
+ASM_DEFINES = $(foreach d,$(DEFINES),$(if $(findstring =,$(d)),--defsym $(d),)) --defsym _MIPS_SIM=1 --defsym mips=1 --defsym VERSION_$(VERSION)=1
+
+INCLUDE_CFLAGS  = -I . -I include -I include/libc  -I include/PR -I include/sys -I $(BIN_DIRS) -I $(SRC_DIR) -I $(LIBULTRA_DIR)
+INCLUDE_CFLAGS += -I $(LIBULTRA_DIR)/src/gu -I $(LIBULTRA_DIR)/src/libc -I $(LIBULTRA_DIR)/src/io  -I $(LIBULTRA_DIR)/src/sc 
+INCLUDE_CFLAGS += -I $(LIBULTRA_DIR)/src/os -I $(SRC_DIR)/hasm/ido
+
+ASFLAGS        = -march=vr4300 -32 -G0 $(ASM_DEFINES) $(INCLUDE_CFLAGS)
+OBJCOPYFLAGS   = -O binary
+
+# Pad to 32MB if matching, otherwise build to a necessary minimum of 1.004MB
+ifeq ($(NON_MATCHING),1)
+  OBJCOPYFLAGS += --pad-to=0x101000 --gap-fill=0xFF
+else
+  OBJCOPYFLAGS += --pad-to=0x2000000 --gap-fill=0xFF
+endif
+
+#IDO Warnings to Ignore. These are coding style warnings we don't follow
+CC_WARNINGS := -fullwarn -Xfullwarn -woff 838,649,624,835,516
+
+CFLAGS := -G 0 -non_shared -verbose -Xcpluscomm -nostdinc -Wab,-r4300_mul
+CFLAGS += $(C_DEFINES)
+CFLAGS += $(INCLUDE_CFLAGS)
+
+
+CHECK_WARNINGS := -Wall -Wextra -Wno-format-security -Wno-unknown-pragmas -Wunused-function -Wno-unused-parameter
+CHECK_WARNINGS += -Werror-implicit-function-declaration -Wno-unused-variable -Wno-missing-braces -Wno-int-conversion -Wno-main
+CHECK_WARNINGS += -Wno-builtin-declaration-mismatch -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast -Wno-switch
+CC_CHECK := $(GCC) -fsyntax-only -fno-builtin -funsigned-char $(C_STANDARD) -D_LANGUAGE_C $(CHECK_WARNINGS) $(INCLUDE_CFLAGS) $(C_DEFINES) $(GCC_COLOR)
+
+# Only add -m32 for x86_64 machines.
+ifneq ($(filter x86_64%,$(UNAME_M)),)
+	CC_CHECK += -m32
+endif
+
+TARGET     = $(BUILD_DIR)/$(BASENAME).$(VERSION)
+LD_SCRIPT  = ver/$(BASENAME).$(VERSION).ld
+ifeq ($(DECOMP_MEASURE),1)
+# keep the original ROM layout: pad the main segment to its original ROM size so assets/overlays do not move
+NM_LD_SCRIPT = $(BUILD_DIR)/$(BASENAME).$(VERSION).nm.ld
+endif
+
+LD_SYMS_DIR = $(if $(NM_LD_SCRIPT),$(BUILD_DIR)/nm_syms,$(SYMBOLS_DIR))
+LD_FLAGS   = -T $(if $(NM_LD_SCRIPT),$(NM_LD_SCRIPT),$(LD_SCRIPT)) -T $(LD_SYMS_DIR)/undefined_syms.txt -T $(LD_SYMS_DIR)/undefined_funcs_auto.$(VERSION).txt  -T $(LD_SYMS_DIR)/undefined_syms_auto.$(VERSION).txt -T $(LD_SYMS_DIR)/libultra_undefined_syms.$(VERSION).txt
+ifeq ($(DECOMP_MEASURE),1)
+	LD_FLAGS += -T $(SYMBOLS_DIR)/nonmatching_aliases.$(VERSION).txt -T $(SYMBOLS_DIR)/nonmatching_manual.$(VERSION).txt --emit-relocs --noinhibit-exec --orphan-handling=warn
+endif
+
+# NM_SCOPE=main (with DECOMP_MEASURE=1): only the main code uses the NON_MATCHING C,
+# overlays keep the original asm. Step 2 of docs/NONMATCHING_BUILD.md.
+ifeq ($(NM_SCOPE),main)
+$(BUILD_DIR)/$(SRC_DIR)/overlays/%.c.o: CFLAGS += -UNON_MATCHING
+endif
+# NM_SCOPE=none: whole pipeline (aliases, padding, nm_postlink) but all code from asm.
+# Must reproduce the original ROM - sanity check of the tooling.
+ifeq ($(NM_SCOPE),none)
+$(BUILD_DIR)/%.c.o: CFLAGS += -UNON_MATCHING
+endif
+# NM_START_LEVEL=0x142 NM_START_CHAR=1: test build that boots straight into a level (src/main.c)
+ifneq ($(NM_START_LEVEL),)
+$(BUILD_DIR)/$(SRC_DIR)/main.c.o: CFLAGS += -DNM_DIRECT_START -DNM_START_LEVEL=$(NM_START_LEVEL) -DNM_START_CHAR=$(NM_START_CHAR)
+endif
+# NM_AUTO_INPUT=1: scripted START/A taps on pad 1 (src/controller.c) for headless emulator tests
+ifneq ($(NM_AUTO_INPUT),)
+$(BUILD_DIR)/$(SRC_DIR)/controller.c.o: CFLAGS += -DNM_AUTO_INPUT
+endif
+# NM_ASM_FILES="src/a.c src/b.c": keep these files on asm (bisecting crashes)
+$(foreach f,$(NM_ASM_FILES),$(eval $(BUILD_DIR)/$(f).o: CFLAGS += -UNON_MATCHING))
+LD_FLAGS  += -Map $(TARGET).map
+
+ASM_PROCESSOR_DIR := $(TOOLS_DIR)/asm-processor
+ASM_PROCESSOR      = $(PYTHON) $(ASM_PROCESSOR_DIR)/build.py
+
+### Optimisation Overrides
+####################### LIBULTRA #########################
+
+# n_ audio library files in src/libultra proven (tools/match_func.py --opt) to be built with -O2 -g3
+SRC_LIBULTRA_G3 := n_syndelete n_cspmessage
+$(foreach f,$(SRC_LIBULTRA_G3),$(eval $(BUILD_DIR)/$(SRC_DIR)/libultra/$(f).c.o: OPT_FLAGS := -O2 -g3))
+
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/flash/%.c.o: MIPSISET := -mips1
+
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/gu/sinf.c.o: OPT_FLAGS := -O2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/gu/sinf.c.o: MIPSISET := -mips2
+
+# IO Files for kiosk version
+ifeq ($(VERSION),kiosk)
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/%.c.o: MIPSISET := -mips2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/%.c.o: OPT_FLAGS := -O1
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/cartrominit.c.o: LIBULTRA_VERSION_DEFINE := -DBUILD_VERSION=7
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/cartrominit.c.o: MIPSISET := -mips2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/cartrominit.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/devmgr.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/epidma.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/epilinkhandle.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/epirawdma.c.o: LIBULTRA_VERSION_DEFINE := -DBUILD_VERSION=7
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/epirawdma.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/epirawread.c.o: LIBULTRA_VERSION_DEFINE := -DBUILD_VERSION=7
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/epirawread.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/epirawwrite.c.o: LIBULTRA_VERSION_DEFINE := -DBUILD_VERSION=7
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/epirawwrite.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/epiread.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/epiwrite.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/motor.c.o: MIPSISET := -mips1
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/motor.c.o: OPT_FLAGS := -O2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/piacs.c.o: MIPSISET := -mips2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/piacs.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/pidma.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/pigetcmdq.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/pimgr.c.o: MIPSISET := -mips1
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/pimgr.c.o: OPT_FLAGS := -O2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/pirawdma.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/vimgr.c.o: MIPSISET := -mips2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/vimgr.c.o: OPT_FLAGS := -O2
+endif
+
+# IO Files for US version
+ifeq ($(VERSION),us)
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/%.c.o: LIBULTRA_VERSION_DEFINE := -DBUILD_VERSION=7
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/%.c.o: MIPSISET := -mips2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/%.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/pimgr.c.o: MIPSISET := -mips1
+
+# Files to be compiled with -O1
+IO_OPT_O1_FILES := ai.c.o aigetlen.c.o aisetfreq.c.o aisetnextbuf.c.o \
+				contreaddata.c.o controller.c.o crc.c.o dp.c.o dpsetnextbuf.c.o dpsetstat.c.o \
+				leointerrupt.c.o pfsdeletefile.c.o sirawdma.c.o sirawread.c.o sirawwrite.c.o si.c.o siacs.c.o \
+				sp.c.o spgetstat.c.o sprawdma.c.o spsetpc.c.o spsetstat.c.o sptask.c.o sptaskyield.c.o \
+				sptaskyielded.c.o vi.c.o viblack.c.o vigetcurrcontext.c.o vigetcurrframebuf.c.o \
+				vigetnextframebuf.c.o visetevent.c.o visetmode.c.o visetspecial.c.o viswapbuf.c.o viswapcontext.c.o 
+$(addprefix $(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/,$(IO_OPT_O1_FILES)): OPT_FLAGS := -O1
+
+# Files to be compiled just with -O2 and not -g3
+IO_OPT_O2_FILES := pimgr.c.o vimgr.c.o
+$(addprefix $(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/,$(IO_OPT_O2_FILES)): OPT_FLAGS := -O2
+
+# Files that are matching libultra version 6 diffs
+IO_BUILD_VERSION_6_FILES := $(IO_OPT_O1_FILES) $(IO_OPT_O2_FILES)
+$(addprefix $(BUILD_DIR)/$(LIBULTRA_DIR)/src/io/,$(IO_BUILD_VERSION_6_FILES)): LIBULTRA_VERSION_DEFINE := -DBUILD_VERSION=6
+
+endif
+
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/libc/%.c.o: MIPSISET := -mips2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/libc/ll.c.o: MIPSISET := -mips3 -32
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/libc/llcvt.c.o: MIPSISET := -mips3 -32
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/libc/ll.c.o: OPT_FLAGS := -O1
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/libc/llcvt.c.o: OPT_FLAGS := -O1
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/libc/ldiv.c.o: OPT_FLAGS := -O3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/libc/xldtob.c.o: OPT_FLAGS := -O3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/libc/xlitob.c.o: OPT_FLAGS := -O3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/libc/xprintf.c.o : OPT_FLAGS := -O3
+
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/%.c.o: OPT_FLAGS := -O1
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/%.c.o: MIPSISET := -mips2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/createthread.c.o: OPT_FLAGS := -O2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/initialize.c.o: OPT_FLAGS := -O2 -g3
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/createthread.c.o: MIPSISET := -mips1
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/initialize.c.o: LIBULTRA_VERSION_DEFINE := -DBUILD_VERSION=7
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/destroythread.c.o: LIBULTRA_VERSION_DEFINE := -D__GNUC__ # Not sure why but this file needs __GNUC__ defined to match properly
+
+# Libultra assembly files
+$(BUILD_DIR)/$(LIBULTRA_DIR)/%.s.o: OPT_FLAGS := -O2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/%.s.o: MIPSISET := -mips2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/%.s.o: OPT_FLAGS := -O1
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/%.s.o: MIPSISET := -mips1
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/writebackdcache.s.o: MIPSISET := -mips2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/invaldcache.s.o: MIPSISET := -mips2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/invalicache.s.o: MIPSISET := -mips2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/unmaptlball.s.o: MIPSISET := -mips2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/exceptasm.s.o: OPT_FLAGS := -O2
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/os/exceptasm.s.o: MIPSISET := -mips3 -32
+
+$(BUILD_DIR)/$(OLD_LIBULTRA_DIR)/%.c.o: OPT_FLAGS := -O2
+$(BUILD_DIR)/$(OLD_LIBULTRA_DIR)/%.c.o: MIPSISET := -mips2
+
+$(BUILD_DIR)/$(OLD_LIBULTRA_DIR)/n_cspsetvol.c.o: OPT_FLAGS := -g
+$(BUILD_DIR)/$(OLD_LIBULTRA_DIR)/n_cspsetvol.c.o: MIPSISET := -mips2
+
+$(BUILD_DIR)/$(SRC_DIR)/gsSnd.c.o: OPT_FLAGS := -g
+$(BUILD_DIR)/$(SRC_DIR)/gsSnd.c.o: MIPSISET := -mips2
+
+# IDO Hasm files
+$(BUILD_DIR)/$(SRC_DIR)/hasm/ido/%.s.o: OPT_FLAGS := -O2
+$(BUILD_DIR)/$(SRC_DIR)/hasm/ido/%.s.o: MIPSISET := -mips3 -32
+
+$(BUILD_DIR)/$(MATH_DIR)/%.c.o: OPT_FLAGS := -g
+$(BUILD_DIR)/$(MATH_DIR)/%.c.o: MIPSISET := -mips2
+
+$(BUILD_DIR)/$(SRC_DIR)/shadows_214A0.c.o: MIPSISET := -mips2
+
+$(BUILD_DIR)/$(SRC_DIR)/diCpuTraceCurrentStack.c.o: OPT_FLAGS := -dollar
+
+#Ignore warnings for libultra files
+$(BUILD_DIR)/$(LIBULTRA_DIR)/%.c.o: CC_WARNINGS := -w
+$(BUILD_DIR)/$(LIBULTRA_DIR)/%.c.o: CC_CHECK := :
+
+# Potential for overlays. Overlays seems to hae just a data section maybe not a rodata:
+#     -use_readwrite_const
+#	     All string	and aggregate constants	are put	into a read/write data
+#	     section.
+
+### Targets
+
+default: all
+
+all: $(VERIFY)
+
+dirs:
+	$(foreach dir,$(SRC_DIRS) $(ASM_DIRS) $(HASM_DIRS) $(BIN_DIRS) $(BIN_OVERLAYS_DIRS) $(ASM_OVERLAYS_DIRS) $(SRC_OVERLAYS_DIRS),$(shell mkdir -p $(BUILD_DIR)/$(dir)))
+
+verify: $(TARGET).z64
+	$(V)$(CRC)
+ifeq ($(NON_MATCHING),0)
+	@(sha1sum -c --quiet ver/verification/$(BASENAME).$(VERSION).sha1 \
+	&& $(PRINT) "$(GREEN)Verify:$(NO_COL)\
+	 $(YELLOW)OK$(NO_COL)\n")
+	$(V)$(PRINT) "$(YELLOW)    __\n .\`_  _\`.\n| | \`| | |\n| |_|._| |\n \`. __ .\'$(NO_COL)\n\n"
+else
+	$(V)$(PRINT) "$(GREEN)Build Complete!$(NO_COL)\n"
+endif
+
+no_verify: $(TARGET).z64
+	$(V)$(CRC)
+	$(V)$(PRINT) "$(GREEN)Build Complete!$(NO_COL)\n"
+
+extract:
+	$(SPLAT) ver/splat/$(BASENAME).$(VERSION).yaml
+# Add these files to certain versions to have an empty file for the pragmas
+ifeq ($(VERSION),kiosk)
+	mkdir -p asm/nonmatchings/libultra/n_cspgetstate
+	touch asm/nonmatchings/libultra/n_cspgetstate/n_alCSPGetState.s
+	touch asm/nonmatchings/libultra/n_cspgetstate/func_800899D8_8A5D8.s
+endif
+ifeq ($(VERSION),us)
+	mkdir -p asm/nonmatchings/libultra/n_synremoveplayer
+	touch asm/nonmatchings/libultra/n_synremoveplayer/n_alSynRemovePlayer.s
+endif
+
+extractall:
+	$(PYTHON) $(SPLAT) ver/splat/$(BASENAME).kiosk.yaml
+	# $(PYTHON) $(SPLAT) ver/splat/$(BASENAME).us.yaml
+	# $(PYTHON) $(SPLAT) ver/splat/$(BASENAME).pal.yaml
+	# $(PYTHON) $(SPLAT) ver/splat/$(BASENAME).jpn.yaml
+
+setup:
+#Set up a python venv so we don't get warnings about breaking system packages.
+	$(V)python3 -m venv $(VENV)
+#Installing the splat dependencies
+	$(V)$(PYTHON) -m pip install -r requirements.txt
+	$(V)make -C $(TOOLS_DIR)
+
+clean:
+	rm -rf $(BUILD_DIR)
+
+clean_src:
+	rm -rf $(BUILD_DIR)/asm
+	rm -rf $(BUILD_DIR)/libultra
+	rm -rf $(BUILD_DIR)/src
+	
+cleanall:
+	rm -rf $(BUILD_DIR)
+
+distclean: clean
+	rm -rf $(ASM_DIRS)
+	rm -rf $(BIN_DIRS)
+	rm -rf assets
+	rm -f $(SYMBOLS_DIR)/*auto.$(VERSION).txt
+	rm -f $(LD_SCRIPT)
+
+distcleanall: cleanall
+	rm -rf assets
+	rm -f $(SYMBOLS_DIR)/*auto.kiosk.txt
+	rm -f $(SYMBOLS_DIR)/*auto.us.txt
+	rm -f $(SYMBOLS_DIR)/*auto.pal.txt
+	rm -f $(SYMBOLS_DIR)/*auto.jpn.txt
+	rm -f ver/jfg.kiosk.ld
+	rm -f ver/jfg.us.ld
+	rm -f ver/jfg.pal.ld
+	rm -f ver/jfg.kiosk.ld
+	rm -f ver/jfg.jpn.ld
+
+#When you just need to wipe old symbol names and re-extract
+cleanextract: distclean extract
+
+#When you just need to wipe old symbol names and re-extract
+cleanextractall: distcleanall extractall
+
+#Put the build folder into expected for use with asm-differ. Only run this with a matching build.
+expected: verify
+	mkdir -p expected
+	rm -rf expected/$(BUILD_DIR)
+	cp -r $(BUILD_DIR)/ expected/
+
+### Recipes
+
+$(GLOBAL_ASM_O_FILES): CC := $(ASM_PROCESSOR) $(CC) -- $(AS) $(ASFLAGS) --
+
+$(BUILD_DIR)/$(BASENAME).$(VERSION).nm.ld: $(LD_SCRIPT)
+	sed "/^    main_ROM_END = __romPos;/i\    __romPos = MAX(__romPos, 0xB1750);" $< > $@
+
+$(TARGET).elf: dirs $(LD_SCRIPT) $(NM_LD_SCRIPT) $(O_FILES)
+	@$(PRINT) "$(GREEN)Linking: $(BLUE)$@$(NO_COL)\n"
+	$(V)$(LD) $(LD_FLAGS) -o $@
+
+ifndef PERMUTER
+$(GLOBAL_ASM_O_FILES): $(BUILD_DIR)/%.c.o: %.c
+	$(call print,Compiling:,$<,$@)
+	$(V)$(CC_CHECK) -MMD -MP -MT $@ -MF $(BUILD_DIR)/$*.d $<
+	$(V)$(CC) -c $(CFLAGS) $(LIBULTRA_VERSION_DEFINE) $(CC_WARNINGS) $(OPT_FLAGS) $(MIPSISET) -o $@ $<
+endif
+
+# non asm-processor recipe
+$(BUILD_DIR)/%.c.o: %.c
+	$(call print,Compiling:,$<,$@)
+	$(V)$(CC_CHECK) -MMD -MP -MT $@ -MF $(BUILD_DIR)/$*.d $<
+	$(V)$(CC) -c $(CFLAGS) $(LIBULTRA_VERSION_DEFINE) $(CC_WARNINGS) $(OPT_FLAGS) $(MIPSISET) -o $@ $<
+
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/libc/llcvt.c.o: $(LIBULTRA_DIR)/src/libc/llcvt.c
+	$(call print,Compiling mips3:,$<,$@)
+	@$(CC) -c $(CFLAGS) $(LIBULTRA_VERSION_DEFINE) $(CC_WARNINGS) $(OPT_FLAGS) $(MIPSISET) -o $@ $<
+	$(V)$(PYTHON) $(TOOLS_DIR)/patchmips3.py $@ || rm $@
+
+$(BUILD_DIR)/$(LIBULTRA_DIR)/src/libc/ll.c.o: $(LIBULTRA_DIR)/src/libc/ll.c
+	$(call print,Compiling mips3:,$<,$@)
+	@$(CC) -c $(CFLAGS) $(LIBULTRA_VERSION_DEFINE) $(CC_WARNINGS) $(OPT_FLAGS) $(MIPSISET) -o $@ $<
+	$(V)$(PYTHON) $(TOOLS_DIR)/patchmips3.py $@ || rm $@
+
+# libultra asm files - Compile with the ido compiler
+$(BUILD_DIR)/$(LIBULTRA_DIR)/%.s.o: $(LIBULTRA_DIR)/%.s
+	$(call print,Assembling Libultra:,$<,$@)
+	$(V)$(CC) -c $(CFLAGS) $(LIBULTRA_VERSION_DEFINE) $(CC_WARNINGS) $(OPT_FLAGS) $(MIPSISET) -o $@ $<
+	$(V)$(STRIP) --strip-unneeded $@
+	@if [ "$(MIPSISET)" = "-mips3 -32" ]; then \
+		$(PYTHON) $(TOOLS_DIR)/patchmips3.py $@ || rm $@; \
+	fi
+
+# hasm files - Compile with the ido compiler
+$(BUILD_DIR)/$(SRC_DIR)/hasm/ido/%.s.o: $(SRC_DIR)/hasm/ido/%.s
+	$(call print,Assembling IDO Hasm:,$<,$@)
+	$(V)$(CC) -c $(CFLAGS) $(LIBULTRA_VERSION_DEFINE) $(CC_WARNINGS) $(OPT_FLAGS) $(MIPSISET) -o $@ $<
+	$(V)$(STRIP) --strip-unneeded $@
+	@if [ "$(MIPSISET)" = "-mips3 -32" ]; then \
+		$(PYTHON) $(TOOLS_DIR)/patchmips3.py $@ || rm $@; \
+	fi
+
+$(BUILD_DIR)/%.s.o: %.s
+	$(call print,Assembling:,$<,$@)
+	$(V)$(AS) $(ASFLAGS) -MD $(BUILD_DIR)/$*.d -o $@ $< 
+
+$(BUILD_DIR)/%.bin.o: %.bin
+	$(call print,Linking Binary:,$<,$@)
+	$(V)$(LD) -r -b binary -o $@ $<
+
+$(TARGET).bin: $(TARGET).elf
+	$(call print,Objcopy:,$<,$@)
+	$(V)$(OBJCOPY) $(OBJCOPYFLAGS) $< $@
+
+$(TARGET).z64: $(TARGET).bin
+	$(call print,CopyRom:,$<,$@)
+	$(V)$(PYTHON) $(TOOLS_DIR)/CopyRom.py $< $@
+
+### Settings
+.PHONY: all clean cleanextract default
+SHELL = /bin/bash -e -o pipefail
+
+-include $(BUILD_DIR)/**/*.d

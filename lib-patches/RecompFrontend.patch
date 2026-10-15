@@ -1,0 +1,35 @@
+diff --git a/recompui/include/recompui/config.h b/recompui/include/recompui/config.h
+index 38b84f5..49ce3ad 100644
+--- a/recompui/include/recompui/config.h
++++ b/recompui/include/recompui/config.h
+@@ -116,6 +116,9 @@ namespace recompui {
+             bool has_rumble_strength = true;
+             bool has_gyro_sensitivity = false;
+             bool has_mouse_sensitivity = false;
++            // Game overrides for the mouse sensitivity option (negative / empty = library default).
++            double mouse_sensitivity_default = -1.0;
++            std::string mouse_sensitivity_description{};
+         };
+ 
+         // Prefab config tabs.
+diff --git a/recompui/src/config/ui_config_tab_general.cpp b/recompui/src/config/ui_config_tab_general.cpp
+index 296ce0e..828940b 100644
+--- a/recompui/src/config/ui_config_tab_general.cpp
++++ b/recompui/src/config/ui_config_tab_general.cpp
+@@ -114,11 +114,13 @@ namespace config {
+             config.add_percent_number_option(
+                 general::options::mouse_sensitivity,
+                 "Mouse Sensitivity",
+-                "Controls the sensitivity of mouse aiming when using items in first person. <b>Setting this to zero will disable mouse aiming.</b>"
++                !options.mouse_sensitivity_description.empty() ? options.mouse_sensitivity_description :
++                std::string("Controls the sensitivity of mouse aiming when using items in first person. <b>Setting this to zero will disable mouse aiming.</b>"
+                 "<br />"
+                 "<br />"
+-                "<b>Note: This option does not allow mouse buttons to activate items. Mouse aiming is intended to be used with inputs that are mapped to mouse movement, such as gyro on Steam Deck.</b>",
+-                is_steam_deck() ? 50.0 : 0.0 // steam deck overrides default to 50%
++                "<b>Note: This option does not allow mouse buttons to activate items. Mouse aiming is intended to be used with inputs that are mapped to mouse movement, such as gyro on Steam Deck.</b>"),
++                options.mouse_sensitivity_default >= 0.0 ? options.mouse_sensitivity_default :
++                (is_steam_deck() ? 50.0 : 0.0) // steam deck overrides default to 50% (games may override)
+             );
+         }
+ 

@@ -1,0 +1,102 @@
+# Review notes (uncertain agent output, to re-check)
+
+- src/objects.c objDeleteRomDef: early return when arg outside both regions is NOT in the asm.
+- src/objects.c objLoadObjList / func_8000710C: table stride, free loop never advances slot pointer (mirrored from m2c).
+- src/fx.c fxAddLevelEffect eviction order, fxDrawLevelEffects sort; tex/cam sprite prototypes inferred from call sites.
+- src/spranim.c hitPlayer prototype (6 vs 7 args across call sites), objAnimDframe signature.
+- src/menu.c viConvertXY / fx*Effect declared unprototyped; global types guessed.
+- src/track.c trackLightFreeMem never frees block 0 (mirrors asm).
+- src/camera.c camStandardPersp: asm passes 3rd arg to matrix_XYZ_YPR, C passes 2. camGetWindowLimits passes (f32*)arg0 vs mode int.
+- src/main.c: several calls still use TrapDanglingJump placeholder (pre-resolver).
+- src/audio_manager_1050.c amAudioTick: agent replaced the base project's NON_EQUIVALENT version (original in research/Jet-Force-Gemini/src/audio_manager_1050.c).
+- src/hit.c func_8007D420: do/while on s16 counter may not terminate when count==1 (unverified).
+- Cross-file: per-file '/* decomp: externs */' blocks declare the same functions with different signatures (e.g. camGetProjOrgMtx, camDoSprite, camDo2DSprite). Needs a consolidation pass into a shared header.
+- src/objects.c declares controlPlayerOpeningChest(void*) with 1 arg; asm (charControl.c) takes 2 args. objects.c call sites lines ~1917/1989.
+- main.c mainPlayerCollected/mainPlayerDropped: overlay_7 asm passes 4 args, main.c definitions take 3.
+- overlay_135 menuCamControl: agent unified two tween constants (A98/A9C, A4/A8) and ADDED a NULL guard not in asm -> must be re-done faithfully.
+- REDO overlay_154 FallBackToSniperPoint: agent wrote a SIMPLIFIED version (not the asm's sort/insertion). Also 004B0/00920 queue loop 'sane reading'.
+- overlay_87 damagecrateControl spE9 placeholder local; loop counts in flyingdebrisControl/057000D4/mantisrockControl copied from m2c (check delay-slot off-by-one).
+- font.c: pre-existing code uses &Font[fontInUse] with 10-byte FontCharDataAlt stride, asm indexes Font with 0x10 stride.
+- overlay_48 blurUpdate: low-confidence Gfx ordering, needs careful asm pass.
+- overlay_117 regionidDraw: sort rewritten as insertion sort (asm uses odd-even network) - REDO faithfully.
+- shadows_214A0.c shadowBoxPolyOverlap/shadowBoundingBox: original human '#if 0' drafts were promoted to NON_MATCHING without re-verification.
+- overlay_66 windowMakeBeams: float-to-int clamp of arg6 simplified (REDO).
+- Symbol overlays.us.txt frontFreeMenuFrame=0x00C00094 is called from squadsAddInterestingEvent (ROM reloc verified) - name may be mislabeled in base project.
+- include/PR/n_libaudio.h: N_ALCSPlayer.chanState at 0x60 in header, asm reads 0x64 (JFG/Rare variant). Header not changed.
+- REDO libultra/n_seqplayer.c: __n_lookupSoundQuick/__n_vsVol/__n_vsPan/__n_initChanState index chanState with sizeof(ALChanState); binary stride is 0x34 -> use SEQP_CS().
+- main.c mainSetDefaultGame: loop end symbol &D_800A3B70 (RamTest1Result) looks wrong (~1070 entries); likely a mislabeled/split symbol - verify.
+- spranim.c exitControl: agent factored code into static helpers exitHitFacing/exitHitApply and collapsed the asm's pair-unrolled hit loop (equivalent, not literal).
+- explosion.c shockwaveControl: IDO-unrolled scale loop written as plain loop (rule now forbids this).
+- fx.c wakeAllocate: agent dropped a dead post-loop fallback branch (asm has it).
+- REDO rcpFast3d.c rcpMosaicClear: three asm loop nests merged into one pass loop (violates literal rule).
+- hit.c hitsCheckLineOfSight/hitVectorHitCheck: test p40[0x14] & 0x40 as byte; asm of sibling uses lhu (halfword) - verify.
+- hit.c declares trackNearestIntersection with 8 args; camlight.c/overlay_13.c use 6 - one is wrong.
+- overlay_65 GenerateTorchFireTex: degenerate-size loops skipped in C (asm would wrap).
+- track.c func_80016EA0: uninitialised stack slot 0x108 modelled as function-local static (approximation).
+- shadows.c shadowGenerate: asm pointer/entry tables at sp+0xA4/0xB4 overlap for >=5 entries; C uses separate arrays.
+- overlay_62: deathmatch selector reads mask at globalflags+0x68 (0x800FF380), race selector uses D_800FF382 - check which width/offset is right.
+
+- overlay_91 fishControl: last Powerf call sets extra arg regs a1..a3; treated as Powerf(base, absYaw) — verify signature/args.
+- n_env.c n_alEnvmixerPull: func_80090F98 called with cast for unused arg2 (&s16).
+- track.c trackCylinderHeights: last arg f32*** vs charControl.c prototype s32 — consolidate prototypes.
+- overlay_51 dogBossControl: mainGetGameCharacter extern (f32,s8,s8) vs asm (s8,s8) — cast used; controlSelectWeapon first call passes 3 args (4th=0 added).
+- overlay_69 func_04500A84: asm passes 5th stack arg to func_135C (4-arg C def, unused); Powerf extra a2/a3 dropped.
+- overlay_16 func_01003464: amSndPlay a2/a3 stale in asm, passed 0/NULL.
+- charControl func_8003109C: objSetupObject called with 2 args (header 3-arg, cast); hit distance at out+0x20 inferred.
+- models.c modMakeLimbModel: mathMtxXFMF called via cast (Matrix vs f32[4][4]); dead per-triangle sums kept.
+- overlay_127 terminalControl: partUpdateTriggers 3-arg call vs 2-arg source sig (cast).
+- hit.c:23 trackNearestIntersection prototype differs from track.c (s32, f32*, f32*, void*, s32, s32) — consolidate.
+- REDO hit.c hitPlayerAimCheck: passes 3-float hitBuf as ray to hitVectorCheck, which reads ray at +0x0C..+0x28 — needs real ray struct; comment ~line 438 wrong.
+- overlay_149 BTSBSlugBoss: TryToSetAnimByIndex called with 3 args once (2-arg proto, cast).
+- overlay_113 missileControl: mathDiffAngle extra a2/a3 dropped; dead unk36 branch dropped.
+- overlay_105 hitBridgeControl: reads prop+0x94 as maxY but hitBridgeInit writes +0x92 — check Prop layout.
+- overlay_143 FatBobPhaseChange: amSndPlayXYZ declared with s32 pos in file but asm passes f32 (cast).
+- overlay_18 inventoryScreen: D_81206A30 texture w1 (asm literal 0x800003C0) — verify symbol naming.
+- hit.c hitPolyPlaneTest: uses stale stack slot 0x148 (lastMdl uninit); track.c extern signature differs.
+- overlay_126 teleportEffectControl: light ptr read at state+0xF30+4i vs init writes 0xF2C (original bug?); Sinf/Cosf calls merged (asm calls twice) — un-merge in faithfulness pass.
+- overlay_63 frontStartScreen: mainToggleDebug declared (s32*,s32) vs main.c (void); D_83F00D18/D78, D_800FF644/648 names from reloc mapping (asm D_800000B8/D_80000118) — verify. mainFrontInit 3 args (check overlay_69 inferred proto).
+- include/variables.h FontCharDataAlt (10 B) does not match usage in font.c (dims +0/+1, type +0xA, DL ptr +0xC) — fix struct.
+- CLEANUP (end): ~54 files have unguarded "decomp: externs" blocks from the early phase (list via grep -B1 -A1). Harmless for the asm build (--asm check OK), but wrap in #ifdef NON_MATCHING once agents are done. overlay_155 already fixed.
+- charControl controlUpdatePlayerAim: overlay_53 call passes unused 8th arg; func_80033EE8 1-arg def vs asm (obj,state).
+- overlay_50 boyBossControl: float->s16 conversion computed once instead of 3x (asm) — un-merge in faithfulness pass.
+- overlay_52 girlBossControl: float->s16 IDO saturation path not reproduced.
+- main.c func_80046070: levelGetWorld 1-arg cast, mainResetRegion called with &D_800A3268, racingInGameStart gets stale a0=0xB, squadsLowMemoryPanic 7 args / splinecamSetup 1 arg differ from overlay defs. mainInitGame kiosk branch still has TrapDanglingJump (non-US).
+- mainPlayerHas: 4-arg in spranim.c (asm passes a3) vs 3-arg in main.c/charControl.c — consolidate.
+- overlay_13 frontDrawTarget: controlGetMaxCharge called with 3 args vs 2-arg def in charControl.c.
+- track.c trackGetPlayerIntersect: best-index stack slot uninit in asm, initialised to 0 in C.
+- overlay_14 func_00E01AD8: frontvtx global written back once after loop (asm updates per iteration).
+- overlay_68: D_overlay_68_04412FD8 declared s8 but accessed as s16 (lh/sh); line ~944 assigns as s8 — check.
+- overlay_41 frontCharBadge: amSndStop declared variadic; frontTeleporterTick a1 = arg2&3 guess; stale wrap value assumed 0x8000.
+- objSetupObject: 2-arg confirmed (a2 never read) — callers using 3-arg casts can be simplified. REDO objects.c: objindex/NoAddObjList declared as arrays but are pointers (asm lw) — affects objGetControlNo and uses ~521/1583.
+- overlay_80 butterflyControl: duplicate "blend != 0" re-check collapsed (faithfulness pass); hitPlayer returns s16 per asm vs s32 decl.
+- overlay_28: shrinkbeamControl prototype changed 4->2 args, trackbeamInit call adjusted (asm reads only a0/a1).
+- overlay_137 realReflectPrint: D_1000A0838/D_1000F2D58/D_1000F2E58 names from reloc mapping (asm D_80000000/D_80000100); camDoSpriteDirect/flamethrowerDraw local protos differ.
+- REDO gsSnd.c func_80085EF0: writes st->volume=2 / st->retries=0x7FFF via libaudio names, but asm stores retries@0x34, volume@0x38 — names swapped (JFG sound-state layout differs from ALSoundState from 0x34). SoundPlayer +0x58 is channel limit, not curTime.
+- hit.c func_8007D660: instQueueMsg called as (f32,f32,f32,s32,s32) — overlay_104 has a 2-arg instQueueMsg; name from reloc mapping, verify.
+- overlay_106 hoovertankControl: verify the dayfactor clamp is really in the asm; camStartShake 6-word form vs camera.c 5-arg.
+- charControl.c:172 SquaddieGetTiltList declared void(void*,s16,s16,f32), real is s16 *(u8 *) — caller ~5273 review.
+- diprint.c vsprintf: asm reads %e/%f arg as pointer-to-f32 (lw then lwc1); diCpu.c:799 passes floats by value — verify.
+- overlay_37 frontOptionsPage: case 3/6 follow m2c semantics (less closely traced) — re-check; cheat-row loop reads cheatOn[5] OOB as asm.
+- FIXED overlay_32 mrhintsInit: hint table stride 0x70 -> 0x38 (asm addiu v1,0x38).
+- hit.c: hitUpdate calls func_8007D660 with 2 floats (f12/f14) + 4 ptrs, but its C def takes only 4 ptrs — check whether func_8007D660 reads f12/f14 (its def may be missing args).
+- overlay_15 girlControl: controlSelectWeapon loop index arg dropped (3-arg); F04A58 def takes s32 arg0 (suspicious).
+- overlay_67 mantisControl: 0.375f divisor (cases 5/7/9), case-16 loop count, motion float consts taken from m2c — re-verify; func_8C4 3-arg def vs 4-arg call, mantisEditMenu 1-arg def vs 4-arg call.
+- REDO n_csplayer.c: N_ALCSPlayer header offsets wrong for this binary (asm: curTime 0x1C, bank 0x20, uspt 0x24, state 0x2C, chanMask 0x30, evtq 0x48, chanState 0x64, vAllocHead 0x68, initOsc 0x74, queue 0x88). Other functions using seqp->uspt/curTime/state/chanMask may read wrong fields. Also n_cspgetstate.c n_alCSPGetState uses seqp->state.
+- func_80087810: controllers 0x40/0x41/0x5B/0x5C/0xFC-0xFF compare chains taken from m2c, not re-checked.
+- Externs guard pass done for 35 files; saves.c and weather.c reverted (matching code uses #defines from their externs block).
+- overlay_9 frontMap: first call (objGetPlayerNo?) gets stale a0 — identity unverified.
+- overlay_42 frontKeyboard: Sinf arg truncated to s16 (asm passes word); camStandardPersp 2nd call a2/a3 stale.
+- charControl func_8002CF78: loop+peeled tail written as plain loop of 8 (faithfulness pass).
+- overlay_3 SquaddieControl (3507 lines): switch case targets not checked word-by-word — re-verify with overlay_relocs.add_jump_tables (tables are in ROM); many sig-mismatch casts to in-file helpers (SquaddieBodyPartHit, UpdateOrSetAnim, TryToUpdateAnim, GetAnimData, ...) — check those definitions.
+- Pre-existing (original project, matching C): TrapDanglingJump() in memory.c mmFreeTick (overlay 3 call), rcpFast3d.c (cloneTasksQueueAndWait?), main.c kiosk branch — could be resolved to real names via tools/m2c_func.dangling_targets().
+- overlay_135: menuCamApproach is an added helper function (violates no-helper rule) — inline it into its callers in the faithfulness pass. It sat outside NON_MATCHING and broke the asm ROM build; now guarded.
+- overlay_142 func_08E00000: m2c body never wrapped to the first segment; rewritten (behaviour fix) by matching agent.
+- match_report.py ignores relocation targets: a "match" does not prove the right global/function is referenced (overlay_2 refractInit used D_overlay_2_00203FE0 instead of 00203790). TODO: compare reloc targets by address (needs symbol-address map for C names).
+- src/libultra n_ audio files (n_synthesizer, n_csplayer, slHeap): original shows locals in stack slots, dead b before epilogue, arg spills = typical of IDO -g (unoptimised). Building with OPT_FLAGS=-g fails with asm-processor "too short .text block" -> asm-processor needs the -g flag passed so it lays out the GLOBAL_ASM placeholders for unoptimised code. Investigate before more matching in src/libultra. n_synthesizer has volatile-local hacks from batch 45 (revisit).
+- AGENT PASS TODO: ~60 sites use `(f32) *(s32 *)(p + off)` (int->float convert). In animseqCamera this was wrong (asm: lwc1 = plain float copy) and crashed the C ROM. Check every such site against the asm: lwc1 -> `*(f32 *)`, lw+mtc1+cvt.s.w -> keep the cast. List: grep -rn "(f32) \*(s32 \*)" src
+- shadows_214A0.c shadowMakeYs: uses a static helper for the plane solve that the asm inlines (helper rule) — inline it in the faithfulness pass.
+- spranim.c exitControl: uses static helpers exitHitFacing/exitHitApply (helper rule) — inline in the faithfulness pass.
+
+## m2c `while (n--)` misdecompile (2026-10-10)
+m2c turned `while (n-- != 0) { use [n] }` (indices n-1..0) into `for (i = n - 1; i != 0; i--)`, which skips index 0 and loops forever for n == 0.
+Fixed in track.c (func_8001412C, trackLightFreeMem). Still to check against asm: overlays/o10/overlay_10.c:224, overlays/o154/overlay_154.c:60.

@@ -1,0 +1,3 @@
+D_8009DA10_9E610  # Unhandled cop0 register in mfc0: 11
+D_8009F250_9FE50  # Unhandled branch in D_8009F250_9FE50 at 0x8009F250 to 0x80001044
+D_8009F3D0_9FFD0  # Negative offset for sw to stack: -4

@@ -1,0 +1,9 @@
+/* hand-written NON_MATCHING link aliases (tools/gen_nm_aliases.py cannot derive these) */
+gDelayedSounds = D_800E9538_EA138;
+/* main->overlay call through the odd ORT entry 1747 (0xD6600000); tools/nm_manual_ort.txt maps it */
+func_overlay_3430_D6600000 = TrapDanglingJump;
+/* sig-mismatch call aliases: keep direct jal so tools/nm_postlink.py can redirect them */
+cloneSetupShadow_2arg = cloneSetupShadow;
+ShirukenBounce_1arg = ShirukenBounce;
+animseqUpdatePath_4arg = animseqUpdatePath;
+instQueueMsg_1arg = instQueueMsg;

@@ -1,0 +1,2 @@
+# name ORT-index  (main->overlay calls that tools/nm_postlink.py cannot map by address)
+func_overlay_3430_D6600000 1747

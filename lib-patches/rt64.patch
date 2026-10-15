@@ -1,0 +1,702 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 79dfc38..5514058 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -69,7 +69,13 @@ set(ZSTD_LEGACY_SUPPORT OFF)
+ set(ZSTD_BUILD_STATIC ON)
+ set(ZSTD_BUILD_SHARED OFF)
+ 
+-add_subdirectory(src/tools/file_to_c)
++if(NOT DEFINED RT64_FILE_TO_C_COMMAND)
++    set(RT64_FILE_TO_C_COMMAND file_to_c)
++    set(RT64_FILE_TO_C_DEPENDS file_to_c)
++endif()
++if("${RT64_FILE_TO_C_COMMAND}" STREQUAL "file_to_c")
++    add_subdirectory(src/tools/file_to_c)
++endif()
+ add_subdirectory(src/contrib/re-spirv)
+ add_subdirectory(src/contrib/nativefiledialog-extended)
+ add_subdirectory(src/contrib/zstd/build/cmake)
+@@ -118,8 +124,9 @@ function(build_shader_spirv_impl TARGETOBJ FILENAME TARGET_NAME OUTNAME)
+         COMMAND ${DXC} ${DXC_SPV_OPTS} ${ARGN} ${FILENAME} /Fo ${OUTNAME}.spv
+         DEPENDS ${FILENAME})
+     add_custom_command(OUTPUT ${OUTNAME}.spirv.c
+-        COMMAND file_to_c ${OUTNAME}.spv ${TARGET_NAME}BlobSPIRV ${OUTNAME}.spirv.c ${OUTNAME}.spirv.h
+-        DEPENDS ${OUTNAME}.spv file_to_c
++        COMMAND ${RT64_FILE_TO_C_COMMAND} ${OUTNAME}.spv ${TARGET_NAME}BlobSPIRV ${OUTNAME}.spirv.c ${OUTNAME}.spirv.h
++        DEPENDS ${OUTNAME}.spv ${RT64_FILE_TO_C_DEPENDS}
++        VERBATIM
+         BYPRODUCTS ${OUTNAME}.spirv.h)
+     target_sources(${TARGETOBJ} PRIVATE ${OUTNAME}.spirv.c)
+ endfunction()
+@@ -129,8 +136,9 @@ function(build_shader_dxil_impl TARGETOBJ FILENAME TARGET_NAME OUTNAME)
+         COMMAND ${DXC} ${DXC_DXIL_OPTS} ${ARGN} ${FILENAME} /Fo ${OUTNAME}.dxil
+         DEPENDS ${FILENAME})
+     add_custom_command(OUTPUT ${OUTNAME}.dxil.c
+-        COMMAND file_to_c ${OUTNAME}.dxil ${TARGET_NAME}BlobDXIL ${OUTNAME}.dxil.c ${OUTNAME}.dxil.h
+-        DEPENDS ${OUTNAME}.dxil file_to_c
++        COMMAND ${RT64_FILE_TO_C_COMMAND} ${OUTNAME}.dxil ${TARGET_NAME}BlobDXIL ${OUTNAME}.dxil.c ${OUTNAME}.dxil.h
++        DEPENDS ${OUTNAME}.dxil ${RT64_FILE_TO_C_DEPENDS}
++        VERBATIM
+         BYPRODUCTS ${OUTNAME}.dxil.h)
+     target_sources(${TARGETOBJ} PRIVATE ${OUTNAME}.dxil.c)
+ endfunction()
+@@ -149,8 +157,9 @@ function(build_shader_msl_impl TARGETOBJ FILENAME TARGET_NAME OUTNAME)
+             COMMAND xcrun -sdk macosx metallib ${OUTNAME}.ir -o ${OUTNAME}.metallib
+             DEPENDS ${OUTNAME}.ir)
+     add_custom_command(OUTPUT ${OUTNAME}.metal.c
+-            COMMAND file_to_c ${OUTNAME}.metallib ${TARGET_NAME}BlobMSL ${OUTNAME}.metal.c ${OUTNAME}.metal.h
+-            DEPENDS ${OUTNAME}.metallib file_to_c
++            COMMAND ${RT64_FILE_TO_C_COMMAND} ${OUTNAME}.metallib ${TARGET_NAME}BlobMSL ${OUTNAME}.metal.c ${OUTNAME}.metal.h
++            DEPENDS ${OUTNAME}.metallib ${RT64_FILE_TO_C_DEPENDS}
++            VERBATIM
+             BYPRODUCTS ${OUTNAME}.metal.h)
+     target_sources(${TARGETOBJ} PRIVATE ${OUTNAME}.metal.c)
+ endfunction()
+@@ -243,8 +252,9 @@ function(preprocess_shader TARGETOBJ SHADERNAME)
+     cmake_path(GET OUTNAME PARENT_PATH OUTPUT_DIR)
+     preprocess(${FILENAME} ${OUTNAME}.rw ${DXC_COMMON_OPTS})
+     add_custom_command(OUTPUT ${OUTNAME}.rw.c
+-        COMMAND file_to_c ${OUTNAME}.rw ${TARGET_NAME}Text ${OUTNAME}.rw.c ${OUTNAME}.rw.h
+-        DEPENDS ${OUTNAME}.rw file_to_c
++        COMMAND ${RT64_FILE_TO_C_COMMAND} ${OUTNAME}.rw ${TARGET_NAME}Text ${OUTNAME}.rw.c ${OUTNAME}.rw.h
++        DEPENDS ${OUTNAME}.rw ${RT64_FILE_TO_C_DEPENDS}
++        VERBATIM
+         BYPRODUCTS ${OUTNAME}.rw.h)
+     file(MAKE_DIRECTORY ${OUTPUT_DIR})
+     target_sources(${TARGETOBJ} PRIVATE ${OUTNAME}.rw.c)
+@@ -330,6 +340,7 @@ set (SOURCES
+     "${PROJECT_SOURCE_DIR}/src/gbi/rt64_gbi_f3dgolden.cpp"
+     "${PROJECT_SOURCE_DIR}/src/gbi/rt64_gbi_f3dpd.cpp"
+     "${PROJECT_SOURCE_DIR}/src/gbi/rt64_gbi_f3dwave.cpp"
++    "${PROJECT_SOURCE_DIR}/src/gbi/rt64_gbi_f3djfg.cpp"
+     "${PROJECT_SOURCE_DIR}/src/gbi/rt64_gbi_f3dzex2.cpp"
+     "${PROJECT_SOURCE_DIR}/src/gbi/rt64_gbi_l3dex2.cpp"
+     "${PROJECT_SOURCE_DIR}/src/gbi/rt64_gbi_rdp.cpp"
+diff --git a/src/gbi/rt64_gbi.cpp b/src/gbi/rt64_gbi.cpp
+index 7006549..8f1359a 100644
+--- a/src/gbi/rt64_gbi.cpp
++++ b/src/gbi/rt64_gbi.cpp
+@@ -14,6 +14,7 @@
+ #include "rt64_gbi_f3dex.h"
+ #include "rt64_gbi_f3dex2.h"
+ #include "rt64_gbi_f3dwave.h"
++#include "rt64_gbi_f3djfg.h"
+ #include "rt64_gbi_f3dzex2.h"
+ #include "rt64_gbi_l3dex2.h"
+ #include "rt64_gbi_rdp.h"
+@@ -396,6 +397,19 @@ namespace RT64 {
+     GBI *GBIManager::getGBIForUCode(uint8_t *RDRAM, uint32_t textAddress, uint32_t dataAddress) {
+         assert(RDRAM != nullptr);
+ 
++        // Verified JFG NTSC-U graphics text (CRC32 BDE9D1FB, 4096 word-swapped bytes).
++        // Do not route arbitrary unknown microcodes through the DMA command decoder.
++        if (XXH3_64bits(RDRAM + textAddress, 0x1000) == 0xA3A9584ECD0D87E7ULL) {
++            GBI &gbi = gbiCache[uint32_t(GBIUCode::F3DJFG)];
++            if (gbi.ucode == GBIUCode::Unknown) {
++                gbi.ucode = GBIUCode::F3DJFG;
++                GBI_RDP::setup(&gbi, true);
++                GBI_F3DJFG::setup(&gbi);
++                fprintf(stderr, "[JFG] F3DJFG graphics microcode recognized.\n");
++            }
++            return &gbi;
++        }
++
+         int32_t textSegmentIndex = -1;
+         uint8_t *rdramCursor = &RDRAM[textAddress];
+         uint32_t rdramHashed = 0;
+@@ -436,6 +450,14 @@ namespace RT64 {
+         }
+ 
+         if (textSegmentIndex < 0 || dataSegmentIndex < 0) {
++            fprintf(stderr, "GBI text=%08X data=%08X XXH3[0x1000]=%016" PRIX64 " data[0x800]=%016" PRIX64 "\n",
++                textAddress, dataAddress, XXH3_64bits(RDRAM + textAddress, 0x1000), XXH3_64bits(RDRAM + dataAddress, 0x800));
++            if (getenv("JFG_DUMP_UCODE") != nullptr) {
++                FILE *dump = fopen("jfg-ucode-text.bin", "wb");
++                if (dump) { fwrite(RDRAM + textAddress, 1, 0x1000, dump); fclose(dump); }
++                dump = fopen("jfg-ucode-data.bin", "wb");
++                if (dump) { fwrite(RDRAM + dataAddress, 1, 0x800, dump); fclose(dump); }
++            }
+             fprintf(stderr, "Unable to find a matching GBI in the current database. This game is not supported in HLE.\n");
+             deduceGBIInformation(RDRAM, textAddress, dataAddress);
+             return nullptr;
+@@ -558,4 +580,4 @@ namespace RT64 {
+     GBIFunction GBIManager::getExtendedFunction() const {
+         return &GBI_EXTENDED::extendedOp;
+     }
+-};
+\ No newline at end of file
++};
+diff --git a/src/gbi/rt64_gbi.h b/src/gbi/rt64_gbi.h
+index 69c35d2..c01aa92 100644
+--- a/src/gbi/rt64_gbi.h
++++ b/src/gbi/rt64_gbi.h
+@@ -28,6 +28,7 @@ namespace RT64 {
+         S2DEX,
+         S2DEX2,
+         L3DEX2,
++        F3DJFG,
+         Count
+     };
+ 
+@@ -74,4 +75,4 @@ namespace RT64 {
+         void deduceGBIInformation(uint8_t *RDRAM, uint32_t textAddress, uint32_t dataAddress);
+         GBIFunction getExtendedFunction() const;
+     };
+-};
+\ No newline at end of file
++};
+diff --git a/src/gbi/rt64_gbi_f3djfg.cpp b/src/gbi/rt64_gbi_f3djfg.cpp
+new file mode 100644
+index 0000000..fa73c1e
+--- /dev/null
++++ b/src/gbi/rt64_gbi_f3djfg.cpp
+@@ -0,0 +1,276 @@
++// JFG DMA command decoding for RT64. Encodings verified against the JFG
++// microcode identity and GLideN64's documented F3DJFG command implementation.
++#include "rt64_gbi_f3djfg.h"
++#include "rt64_gbi_f3d.h"
++#include "rt64_gbi_rdp.h"
++#include "hle/rt64_interpreter.h"
++#include "common/rt64_math.h"
++#include "../include/rt64_extended_gbi.h"
++#include <stdexcept>
++#include <cstdio>
++#include <cstdlib>
++#include <algorithm>
++
++extern "C" void jfg_logf(const char* fmt, ...);
++extern "C" void jfg_compare_decoded_matrix(uint32_t address, uint32_t task, const float* decoded);
++extern "C" uint32_t jfgAppCalls; // display lists handed to RT64 (rom_decompression.cpp)
++
++namespace RT64::GBI_F3DJFG {
++    static uint32_t dmaAddress(State *state, uint32_t address) {
++        // Packed JFG vertices and texture-offset halfwords need byte addresses;
++        // the standard RSP DMA helper clears the low three bits.
++        return state->rsp->fromSegmented(address) & 0x00FFFFFF;
++    }
++    static void checkRange(uint32_t address, uint32_t size) {
++        if (uint64_t(address) + size > 0x800000)
++            throw std::runtime_error("F3DJFG DMA outside RDRAM");
++    }
++    static uint16_t half(State *state, uint32_t address) {
++        checkRange(address, 2);
++        uint16_t result;
++        memcpy(&result, state->RDRAM + (address ^ 2), 2);
++        return result;
++    }
++    // JFG_TRACE_TRI: per-task triangle statistics (screen coverage of 3D triangles).
++    struct TriStats {
++        uint32_t tris = 0, allFront = 0, someBehind = 0, rightHalf = 0, leftHalf = 0, culledFlag = 0, vtxLoads = 0, matrices = 0, mulMatrices = 0;
++        float minX = 1e9f, maxX = -1e9f, minY = 1e9f, maxY = -1e9f;
++    };
++    static TriStats triStats;
++    // JFG_TRACE_VTXID=<display list number (jfgAppCalls)>: log every vertex load (vertex index, count, dst, matrix slot and the matrix id
++    // = (address - matrixOffset) / 64 loaded into that slot) of that one RSP task, for offline checks.
++    static int jfgSlotIds[16] = {};
++    static uint32_t jfgTaskCounter = 0;
++    static bool jfgTraceVtxId() {
++        static const uint32_t task = std::getenv("JFG_TRACE_VTXID") ? uint32_t(std::atoi(std::getenv("JFG_TRACE_VTXID"))) : 0;
++        return task != 0 && jfgAppCalls >= task && jfgAppCalls <= task + 400 && (jfgAppCalls % 50) == 0;
++    }
++    static void reset(State *state) {
++        static const bool traceTri = std::getenv("JFG_TRACE_TRI") != nullptr;
++        static uint32_t printed = 0;
++        if (traceTri && triStats.tris > 50 && printed < 12) {
++            ++printed;
++            const TriStats &t = triStats;
++            fprintf(stderr, "JFG_TRISTATS tris=%u allFront=%u someBehind=%u leftHalf=%u rightHalf=%u noCullFlag=%u vtxLoads=%u mtx=%u mulMtx=%u bbox=%.0f..%.0f x %.0f..%.0f\n",
++                t.tris, t.allFront, t.someBehind, t.leftHalf, t.rightHalf, t.culledFlag, t.vtxLoads, t.matrices, t.mulMatrices, double(t.minX), double(t.maxX), double(t.minY), double(t.maxY));
++        }
++        triStats = {};
++        ++jfgTaskCounter;
++        GBI_F3D::reset(state);
++        state->rsp->jfg = {};
++        state->rsp->jfg.matrices.fill(hlslpp::float4x4::identity());
++        // These are complete projective transforms, not affine object matrices.
++        // Preserve their exact coefficients instead of decomposing/recomposing
++        // them during frame interpolation (which changes the perspective column).
++        state->rsp->matrixId(G_EX_ID_IGNORE, false, false, false,
++            G_EX_COMPONENT_SKIP, G_EX_COMPONENT_SKIP, G_EX_COMPONENT_SKIP,
++            G_EX_COMPONENT_SKIP, G_EX_COMPONENT_SKIP, G_EX_COMPONENT_SKIP,
++            G_EX_COMPONENT_SKIP, G_EX_COMPONENT_AUTO, G_EX_COMPONENT_AUTO,
++            G_EX_ORDER_AUTO, G_EX_ASPECT_AUTO, G_EX_EDIT_NONE, false, false);
++    }
++    static void matrix(State *state, DisplayList **dl) {
++        auto &j = state->rsp->jfg;
++        if ((*dl)->p0(0, 16) != 64) throw std::runtime_error("F3DJFG invalid matrix length");
++        uint32_t slot = (*dl)->p0(16, 4);
++        bool multiply = slot != 0 && (*dl)->p0(23, 1);
++        if (slot == 0) slot = (*dl)->p0(22, 2);
++        if (slot >= j.matrices.size()) throw std::runtime_error("F3DJFG invalid matrix slot");
++        uint32_t address = j.matrixOffset + dmaAddress(state, (*dl)->w1);
++        checkRange(address, 64);
++        FixedMatrix fixed;
++        memcpy(&fixed, state->RDRAM + address, sizeof(fixed));
++        auto m = fixed.toMatrix4x4();
++        static const bool tracePair = std::getenv("JFG_TRACE_MATRIX_PAIR_AT") != nullptr;
++        if (tracePair && multiply) {
++            float decoded[16];
++            for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) decoded[r * 4 + c] = float(m[r][c]);
++            jfg_compare_decoded_matrix(address, jfgAppCalls, decoded);
++        }
++        static const bool traceMtxRange = std::getenv("JFG_TRACE_MTXRANGE") != nullptr;
++        if (traceMtxRange && multiply) {
++            // Joint matrices are rotation(+scale) + translation: |rotation| stays ~<= 2. Larger values mean the
++            // RSP read data that was not (yet) converted to s15.16, or the wrong buffer.
++            static uint32_t bad = 0, total = 0;
++            ++total;
++            float mx = 0.0f;
++            for (uint32_t r = 0; r < 3; ++r) for (uint32_t c = 0; c < 3; ++c) mx = std::max(mx, std::abs(float(m[r][c])));
++            if (mx > 4.0f && bad < 40) {
++                ++bad;
++                jfg_logf("JFG_MTXRANGE bad joint matrix %u/%u addr=%08X slot=%u maxrot=%g row0=%g %g %g\n", bad, total, address, slot,
++                    double(mx), double(float(m[0][0])), double(float(m[0][1])), double(float(m[0][2])));
++            }
++        }
++        j.matrices[slot] = multiply ? hlslpp::mul(m, j.matrices[0]) : m;
++        j.matrixAddresses[slot] = address;
++        jfgSlotIds[slot & 15] = int(address - j.matrixOffset) / 64;
++        if (jfgTraceVtxId()) jfg_logf("VTXID mtx slot=%u id=%d mul=%u moff=%08X\n", slot, jfgSlotIds[slot & 15], unsigned(multiply), j.matrixOffset);
++        j.matrixIndex = slot;
++        ++triStats.matrices;
++        if (multiply) ++triStats.mulMatrices;
++        static const bool traceDMA = std::getenv("JFG_TRACE_DMA") != nullptr;
++        static uint32_t tracedMatrices = 0;
++        static uint32_t tracedModelMatrices = 0;
++        const bool modelTrace = slot == 1;
++        uint32_t &traceCount = modelTrace ? tracedModelMatrices : tracedMatrices;
++        if (traceDMA && traceCount < 20) {
++            ++traceCount;
++            fprintf(stderr, "JFG_MTX%s %u cmd=%08X/%08X addr=%08X slot=%u mul=%u matrix=", modelTrace ? "_MODEL" : "", traceCount, (*dl)->w0, (*dl)->w1, address, slot, unsigned(multiply));
++            for (uint32_t r = 0; r < 4; ++r)
++                for (uint32_t c = 0; c < 4; ++c)
++                    fprintf(stderr, " %.7g", double(float(j.matrices[slot][r][c])));
++            fprintf(stderr, "\n");
++        }
++    }
++    static void offsets(State *state, DisplayList **dl) {
++        state->rsp->jfg.matrixOffset = (*dl)->p0(0, 24);
++        state->rsp->jfg.vertexOffset = (*dl)->p1(0, 24);
++    }
++    static void vertex(State *state, DisplayList **dl) {
++        auto &j = state->rsp->jfg;
++        if (!((*dl)->w0 & 0x10000)) j.vertexCursor = 0;
++        else if (j.billboard) j.vertexCursor = 1;
++        const uint32_t count = (*dl)->p0(19, 5);
++        static const bool traceVtxCmd = std::getenv("JFG_TRACE_VTXCMD") != nullptr;
++        static uint32_t tracedVtxCmd = 0;
++        if (traceVtxCmd && ((*dl)->w0 & 0xC000) && tracedVtxCmd < 40) {
++            ++tracedVtxCmd;
++            jfg_logf("JFG_VTXCMD high dst bits: w0=%08X w1=%08X count=%u dst5=%u dst7=%u len=%u\n", (*dl)->w0, (*dl)->w1,
++                count, (*dl)->p0(9, 5), (*dl)->p0(9, 7), (*dl)->p0(0, 9));
++        }
++        static const uint32_t traceVoff = std::getenv("JFG_TRACE_VTXID_VOFF") ? uint32_t(std::strtoul(std::getenv("JFG_TRACE_VTXID_VOFF"), nullptr, 16)) : 0;
++        static uint32_t tracedVoff = 0;
++        if (traceVoff && j.vertexOffset == traceVoff && (jfgAppCalls % 50) < 3 && tracedVoff < 3000) {
++            ++tracedVoff;
++            jfg_logf("VTXID vtx dl=%u voff=%08X w1=%08X v=%u n=%u dst=%u slot=%u id=%d\n", jfgAppCalls, j.vertexOffset, (*dl)->w1,
++                (*dl)->w1 / 10, count, j.vertexCursor + (*dl)->p0(9, 5), j.matrixIndex, jfgSlotIds[j.matrixIndex & 15]);
++        }
++        if (jfgTraceVtxId()) jfg_logf("VTXID vtx voff=%08X w1=%08X v=%u n=%u dst=%u slot=%u id=%d\n", j.vertexOffset, (*dl)->w1,
++            (*dl)->w1 / 10, count, j.vertexCursor + (*dl)->p0(9, 5), j.matrixIndex, jfgSlotIds[j.matrixIndex & 15]);
++        state->rsp->setVertexJFG((*dl)->w1, count, j.vertexCursor + (*dl)->p0(9, 5));
++        ++triStats.vtxLoads;
++        j.vertexCursor += count;
++    }
++    static void triangles(State *state, DisplayList **dl) {
++        auto *rsp = state->rsp.get();
++        const auto texture = rsp->textureState;
++        rsp->setTexture(texture.tile, texture.levels ? texture.levels - 1 : 0,
++            (*dl)->p0(16, 4), texture.sc, texture.tc);
++        const uint32_t address = dmaAddress(state, (*dl)->w1);
++        // The triangle count is the 12-bit field at bit 4 (the low halfword is the
++        // DMA length in bytes, 16 per triangle). Bits 20..23 only hold (count-1)&15,
++        // which wraps for groups with more than 16 triangles (most character limbs).
++        const uint32_t count = (*dl)->p0(4, 12);
++        checkRange(address, count * 16);
++        for (uint32_t i = 0; i < count; ++i) {
++            const uint32_t p = address + i * 16;
++            const uint8_t flags = state->RDRAM[p ^ 3];
++            uint32_t indices[3];
++            for (uint32_t k = 0; k < 3; ++k) {
++                indices[k] = state->RDRAM[(p + 1 + k) ^ 3];
++                if (indices[k] >= RSP_MAX_VERTICES) throw std::runtime_error("F3DJFG invalid triangle index");
++                if (!rsp->jfg.loadedVertices[indices[k]]) throw std::runtime_error("F3DJFG triangle vertex not loaded");
++                const auto &workload = state->ext.workloadQueue->workloads[state->ext.workloadQueue->writeCursor];
++                if (rsp->indices[indices[k]] >= workload.drawData.vertexCount()) throw std::runtime_error("F3DJFG triangle vertex outside workload");
++                const uint32_t st = (uint32_t(half(state, p + 4 + k * 4)) << 16) | half(state, p + 6 + k * 4);
++                rsp->modifyVertex(indices[k], G_MWO_POINT_ST, st);
++            }
++            static const int cullMode = std::getenv("JFG_CULL") ? std::atoi(std::getenv("JFG_CULL")) : 0;
++            const uint32_t cull = ((flags & 0x40) || cullMode == 1) ? 0 : (cullMode == 2) ?
++                ((rsp->viewportStack[rsp->viewportStackSize - 1].scale.x > 0) ? rsp->cullFrontMask : (rsp->cullBothMask ^ rsp->cullFrontMask)) :
++                ((rsp->viewportStack[rsp->viewportStackSize - 1].scale.x > 0) ?
++                    (rsp->cullBothMask ^ rsp->cullFrontMask) : rsp->cullFrontMask);
++            rsp->modifyGeometryMode(~rsp->cullBothMask, cull);
++            static const bool forceZ = std::getenv("JFG_FORCE_Z") != nullptr; // debug experiment: depth on for all tris
++            if (forceZ && (state->rdp->otherMode.L & 0x30) != 0x30)
++                state->rdp->setOtherMode(state->rdp->otherMode.H, state->rdp->otherMode.L | 0x30);
++            rsp->drawIndexedTri(indices[0], indices[1], indices[2]);
++            static const bool traceTri = std::getenv("JFG_TRACE_TRI") != nullptr;
++            if (traceTri) {
++                const auto &workload = state->ext.workloadQueue->workloads[state->ext.workloadQueue->writeCursor];
++                const auto &ps = workload.drawData.posScreen;
++                const auto &pt = workload.drawData.posTransformed;
++                TriStats &t = triStats;
++                ++t.tris;
++                if (flags & 0x40) ++t.culledFlag;
++                bool front = true;
++                float cx = 0.0f;
++                for (uint32_t k = 0; k < 3; ++k) {
++                    const uint32_t g = rsp->indices[indices[k]];
++                    if (float(pt[g].w) <= 0.0f) front = false;
++                    cx += float(ps[g][0]) / 3.0f;
++                }
++                if (front) {
++                    ++t.allFront;
++                    if (cx >= 160.0f) ++t.rightHalf; else ++t.leftHalf;
++                    for (uint32_t k = 0; k < 3; ++k) {
++                        const uint32_t g = rsp->indices[indices[k]];
++                        t.minX = std::min(t.minX, float(ps[g][0])); t.maxX = std::max(t.maxX, float(ps[g][0]));
++                        t.minY = std::min(t.minY, float(ps[g][1])); t.maxY = std::max(t.maxY, float(ps[g][1]));
++                    }
++                }
++                else ++t.someBehind;
++            }
++        }
++        rsp->jfg.vertexCursor = 0;
++    }
++    static void moveWord(State *state, DisplayList **dl) {
++        switch ((*dl)->p0(0, 8)) {
++        case 2: state->rsp->jfg.billboard = ((*dl)->w1 & 1) != 0; break;
++        case 10: state->rsp->jfg.matrixIndex = (*dl)->p1(6, 2); break;
++        default: GBI_F3D::moveWord(state, dl); break;
++        }
++    }
++    static void textureOffset(State *state, DisplayList **dl) {
++        auto &j = state->rsp->jfg;
++        j.textureOffset = dmaAddress(state, (*dl)->w1);
++        checkRange(j.textureOffset, 2);
++        j.textureShift = j.textureCount = 0;
++    }
++    static void textureImage(State *state, DisplayList **dl) {
++        auto &j = state->rsp->jfg;
++        uint32_t address = dmaAddress(state, (*dl)->w1);
++        if (j.textureOffset) {
++            if ((*dl)->p0(21, 3) == G_IM_FMT_RGBA) {
++                j.textureShift = half(state, j.textureOffset + j.textureCount * 2);
++                address += j.textureShift;
++            }
++            else j.textureOffset = j.textureShift = j.textureCount = 0;
++        }
++        checkRange(address, 1);
++        state->rdp->setTextureImage((*dl)->p0(21, 3), (*dl)->p0(19, 2), (*dl)->p0(0, 12) + 1, address);
++    }
++    static void loadBlock(State *state, DisplayList **dl) {
++        auto &j = state->rsp->jfg;
++        if (j.textureOffset) {
++            if (j.textureShift % ((((*dl)->p1(12, 12) >> 2) + 1) << 3)) {
++                state->rdp->texture.address -= j.textureShift;
++                j.textureOffset = j.textureShift = j.textureCount = 0;
++            }
++            else ++j.textureCount;
++        }
++        GBI_RDP::loadBlock(state, dl);
++    }
++    static void countedList(State *state, DisplayList **dl) {
++        // Counted calls execute exactly N commands and then return without ENDDL.
++        const uint32_t count = (*dl)->p0(16, 8);
++        const uint32_t address = dmaAddress(state, (*dl)->w1);
++        checkRange(address, count * sizeof(DisplayList));
++        state->pushReturnAddress(*dl);
++        state->ext.interpreter->jfgCommandCount = count + 1;
++        *dl = reinterpret_cast<DisplayList *>(state->RDRAM + address) - 1;
++    }
++    void setup(GBI *gbi) {
++        GBI_F3D::setup(gbi);
++        gbi->map[0x01] = matrix;
++        gbi->map[0x02] = textureOffset;
++        gbi->map[0x04] = vertex;
++        gbi->map[0x05] = triangles;
++        gbi->map[0x07] = countedList;
++        gbi->map[0xBF] = offsets;
++        gbi->map[0xBC] = moveWord;
++        gbi->map[G_SETTIMG] = textureImage;
++        gbi->map[G_LOADBLOCK] = loadBlock;
++        gbi->resetFromTask = reset;
++        gbi->resetFromLoad = reset;
++    }
++}
+diff --git a/src/gbi/rt64_gbi_f3djfg.h b/src/gbi/rt64_gbi_f3djfg.h
+new file mode 100644
+index 0000000..fad335e
+--- /dev/null
++++ b/src/gbi/rt64_gbi_f3djfg.h
+@@ -0,0 +1,5 @@
++#pragma once
++#include "rt64_gbi.h"
++namespace RT64::GBI_F3DJFG {
++    void setup(GBI *gbi);
++}
+diff --git a/src/hle/rt64_application.cpp b/src/hle/rt64_application.cpp
+index 785de27..f0d9243 100644
+--- a/src/hle/rt64_application.cpp
++++ b/src/hle/rt64_application.cpp
+@@ -3,6 +3,9 @@
+ //
+ 
+ #include "rt64_application.h"
++#include <cstdio>
++#include <cstdlib>
++#include <ctime>
+ #include "rhi/rt64_render_hooks.h"
+ 
+ #include <cinttypes>
+@@ -29,6 +32,9 @@ namespace plume {
+ #endif
+ }
+ 
++extern "C" void jfg_logf(const char* fmt, ...);
++extern "C" void jfg_latency_event(char kind);
++extern "C" uint32_t jfgAppCalls;
+ namespace RT64 {
+     // Constants
+ 
+@@ -461,6 +467,14 @@ namespace RT64 {
+     Application::~Application() {}
+ 
+     void Application::processDisplayLists(uint8_t *memory, uint32_t dlStartAddress, uint32_t dlEndAddress, bool isHLE) {
++        {
++            static const bool jfgTraceApp = std::getenv("JFG_TRACE_APPDL") != nullptr;
++            ++jfgAppCalls;
++            jfg_latency_event('D');
++            if (jfgTraceApp && ((jfgAppCalls % 30) == 0)) {
++                jfg_logf("JFG_APPDL %u t=%ld hle=%d start=%08X end=%08X paused=%d\n", jfgAppCalls, long(clock()), int(isHLE), dlStartAddress, dlEndAddress, int(state->debuggerInspector.paused));
++            }
++        }
+         if (state->debuggerInspector.paused) {
+             // TODO: It'd be necessary to parse the display list to see if it actually does a fullSync before sending the interrupt.
+             state->dpInterrupt();
+diff --git a/src/hle/rt64_interpreter.cpp b/src/hle/rt64_interpreter.cpp
+index dccaa87..d688a3b 100644
+--- a/src/hle/rt64_interpreter.cpp
++++ b/src/hle/rt64_interpreter.cpp
+@@ -5,6 +5,9 @@
+ #include "rt64_interpreter.h"
+ 
+ #include <cassert>
++#include <cstdio>
++#include <cstdlib>
++#include <ctime>
+ 
+ //#define DUMP_DISPLAY_LISTS
+ 
+@@ -24,6 +27,7 @@ namespace RT64 {
+     }
+ 
+     void Interpreter::loadUCodeGBI(uint32_t textAddress, uint32_t dataAddress, bool resetFromTask) {
++        if (resetFromTask) jfgCommandCount = 0;
+         if (!resetFromTask) {
+             state->flush();
+         }
+@@ -169,8 +173,19 @@ namespace RT64 {
+         DisplayList *dl = dlStart;
+         uint8_t opCode;
+         GBIFunction func;
++        static const uint32_t jfgDumpFrame = std::getenv("JFG_DUMP_DL") ? uint32_t(std::atoi(std::getenv("JFG_DUMP_DL"))) : 0;
++        static uint32_t jfgDlCalls = 0;
++        ++jfgDlCalls;
++        const bool jfgDump = jfgDumpFrame && (jfgDlCalls == jfgDumpFrame);
++        if (jfgDumpFrame && ((jfgDlCalls % 100) == 0 || jfgDlCalls > 90)) {
++            fprintf(stderr, "JFG_DLCOUNT t=%ld %u\n", long(clock()), jfgDlCalls);
++        }
+         while (dl != nullptr) {
+             opCode = (dl->w0 >> 24);
++            if (jfgDump) {
++                fprintf(stderr, "JFG_DL d%zu c%u %08X: %08X %08X\n", state->returnAddressStack.size(), jfgCommandCount,
++                    uint32_t(reinterpret_cast<uint8_t *>(dl) - state->RDRAM), dl->w0, dl->w1);
++            }
+ 
+             if ((extendedOpCode != 0) && (opCode == extendedOpCode)) {
+                 extendedFunction(state, &dl);
+@@ -186,10 +201,20 @@ namespace RT64 {
+                     func(state, &dl);
+                 }
+                 else {
++                    if (hleGBI->ucode == GBIUCode::F3DJFG) {
++                        static bool warned[256] = {};
++                        if (!warned[opCode]) {
++                            warned[opCode] = true;
++                            fprintf(stderr, "F3DJFG unsupported command 0x%02X: %08X %08X\n", opCode, dl->w0, dl->w1);
++                        }
++                    }
+                     RT64_LOG_PRINTF("DL Parser ran into an unknown opCode (GBI %u): %u / 0x%X", uint32_t(hleGBI->ucode), opCode, opCode);
+                 }
+             }
+ 
++            if (jfgCommandCount && --jfgCommandCount == 0) {
++                dl = state->popReturnAddress();
++            }
+             if (dl != nullptr) {
+                 dl++;
+             }
+diff --git a/src/hle/rt64_interpreter.h b/src/hle/rt64_interpreter.h
+index c29e4b2..5fe33be 100644
+--- a/src/hle/rt64_interpreter.h
++++ b/src/hle/rt64_interpreter.h
+@@ -15,6 +15,7 @@ namespace RT64 {
+         GBIManager gbiManager;
+         GBI *hleGBI;
+         uint8_t extendedOpCode = 0;
++        uint32_t jfgCommandCount = 0;
+         GBIFunction extendedFunction = nullptr;
+ 
+         struct {
+@@ -28,4 +29,4 @@ namespace RT64 {
+         void processRDPLists(uint32_t dlStartAdddress, DisplayList* dlStart, DisplayList* dlEnd);
+         void processDisplayLists(uint32_t dlStartAdddress, DisplayList *dlStart);
+     };
+-};
+\ No newline at end of file
++};
+diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
+index 3227ab1..6671400 100644
+--- a/src/hle/rt64_present_queue.cpp
++++ b/src/hle/rt64_present_queue.cpp
+@@ -9,6 +9,8 @@
+ 
+ #include "rt64_workload_queue.h"
+ 
++extern "C" void jfg_latency_event(char kind);
++
+ namespace RT64 {
+     // PresentQueue
+ 
+@@ -399,6 +401,7 @@ namespace RT64 {
+                 }
+ 
+                 RenderCommandSemaphore *waitSemaphore = drawSemaphores[swapChainIndex].get();
++                jfg_latency_event('P');
+                 presentTimestamp = Timer::current();
+                 swapChainValid = ext.swapChain->present(swapChainIndex, &waitSemaphore, 1);
+                 presentProfiler.logAndRestart();
+diff --git a/src/hle/rt64_rsp.cpp b/src/hle/rt64_rsp.cpp
+index ee2030b..ce1d9cd 100644
+--- a/src/hle/rt64_rsp.cpp
++++ b/src/hle/rt64_rsp.cpp
+@@ -5,6 +5,8 @@
+ #include "rt64_rsp.h"
+ 
+ #include <cassert>
++#include <cstdio>
++#include <cstdlib>
+ 
+ #include "../include/rt64_extended_gbi.h"
+ #include "common/rt64_common.h"
+@@ -376,6 +378,70 @@ namespace RT64 {
+         setVertexCommon<true, sizeof(Vertex)>(rdramAddress, dstIndex, dstIndex + vtxCount);
+     }
+     
++    void RSP::setVertexJFG(uint32_t address, uint32_t vtxCount, uint32_t dstIndex) {
++        if (dstIndex + vtxCount > RSP_MAX_VERTICES) {
++            throw std::runtime_error("F3DJFG vertex buffer overflow");
++        }
++        const uint32_t base = jfg.vertexOffset + (fromSegmented(address) & 0x00FFFFFF);
++        if (base & 7) {
++            static bool loggedUnalignedDMA = false;
++            if (!loggedUnalignedDMA) {
++                loggedUnalignedDMA = true;
++                fprintf(stderr, "F3DJFG packed vertex DMA: address=%08X base=%08X count=%u dst=%u\n", address, base, vtxCount, dstIndex);
++            }
++        }
++        if (uint64_t(base) + vtxCount * 10 > 0x800000) {
++            throw std::runtime_error("F3DJFG vertex DMA outside RDRAM");
++        }
++        for (uint32_t i = 0; i < vtxCount; ++i) {
++            const uint32_t p = base + i * 10;
++            Vertex &v = vertices[dstIndex + i];
++            v = {};
++            memcpy(&v.x, state->RDRAM + (p ^ 2), 2);
++            memcpy(&v.y, state->RDRAM + ((p + 2) ^ 2), 2);
++            memcpy(&v.z, state->RDRAM + ((p + 4) ^ 2), 2);
++            v.color.r = state->RDRAM[(p + 6) ^ 3];
++            v.color.g = state->RDRAM[(p + 7) ^ 3];
++            v.color.b = state->RDRAM[(p + 8) ^ 3];
++            v.color.a = state->RDRAM[(p + 9) ^ 3];
++        }
++        // F3DJFG DMA matrices are complete clip-space transforms. Keep the
++        // projection identity, as in gSPDMAMatrix: decomposing these arbitrary
++        // combined matrices as a camera projection is not valid. The world
++        // transform path preserves all four components, including clip-space W.
++        auto combined = jfg.matrices[jfg.matrixIndex];
++        static const bool noBillboard = std::getenv("JFG_NO_BILLBOARD") != nullptr; // debug experiment
++        if (jfg.billboard && dstIndex != 0 && !noBillboard) {
++            const auto &workload = state->ext.workloadQueue->workloads[state->ext.workloadQueue->writeCursor];
++            if (!jfg.loadedVertices[0] || indices[0] >= workload.drawData.posTransformed.size()) {
++                throw std::runtime_error("F3DJFG billboard anchor not loaded");
++            }
++            const auto &anchor = workload.drawData.posTransformed[indices[0]];
++            for (uint32_t c = 0; c < 4; ++c) combined[3][c] += anchor[c];
++        }
++        matrixCommon(hlslpp::float4x4::identity(), 0, projMask | loadMask);
++        matrixCommon(combined, jfg.matrixAddresses[jfg.matrixIndex], loadMask);
++        setVertexCommon<true, 10>(base, dstIndex, dstIndex + vtxCount);
++        for (uint32_t i = 0; i < vtxCount; ++i) jfg.loadedVertices.set(dstIndex + i);
++        static const bool traceDMA = std::getenv("JFG_TRACE_DMA") != nullptr;
++        static uint32_t tracedVertices = 0;
++        static uint32_t traced3DVertices = 0;
++        const bool trace3D = jfg.matrixIndex == 1 || combined[0][3] != 0.0f || combined[1][3] != 0.0f || combined[2][3] != 0.0f;
++        uint32_t &traceCount = trace3D ? traced3DVertices : tracedVertices;
++        if (traceDMA && traceCount < 20 && vtxCount) {
++            ++traceCount;
++            const auto &workload = state->ext.workloadQueue->workloads[state->ext.workloadQueue->writeCursor];
++            const auto &vp = viewportStack[viewportStackSize - 1];
++            fprintf(stderr, "JFG_VTX%s %u addr=%08X base=%08X count=%u dst=%u slot=%u bb=%u viewport=%.5g/%.5g/%.5g/%.5g samples=", trace3D ? "_3D" : "", traceCount, address, base, vtxCount, dstIndex, jfg.matrixIndex, unsigned(jfg.billboard), double(float(vp.scale.x)), double(float(vp.scale.y)), double(float(vp.translate.x)), double(float(vp.translate.y)));
++            for (uint32_t i = 0; i < vtxCount && i < 3; ++i) {
++                const auto &v = vertices[dstIndex + i];
++                const auto &p = workload.drawData.posTransformed[indices[dstIndex + i]];
++                fprintf(stderr, " [%d,%d,%d=>%.7g,%.7g,%.7g,%.7g]", int(v.x), int(v.y), int(v.z), double(float(p.x)), double(float(p.y)), double(float(p.z)), double(float(p.w)));
++            }
++            fprintf(stderr, "\n");
++        }
++    }
++
+     void RSP::setVertexPD(uint32_t address, uint32_t vtxCount, uint32_t dstIndex) {
+         if ((dstIndex >= RSP_MAX_VERTICES) || ((dstIndex + vtxCount) > RSP_MAX_VERTICES)) {
+             assert(false && "Vertex indices are not valid. DL is possibly corrupted.");
+diff --git a/src/hle/rt64_rsp.h b/src/hle/rt64_rsp.h
+index 61bb3b1..51477e1 100644
+--- a/src/hle/rt64_rsp.h
++++ b/src/hle/rt64_rsp.h
+@@ -130,6 +130,15 @@ namespace RT64 {
+         };
+ 
+         State *state;
++        struct {
++            uint32_t matrixOffset = 0, vertexOffset = 0, vertexCursor = 0;
++            uint32_t textureOffset = 0, textureShift = 0, textureCount = 0;
++            uint32_t matrixIndex = 0;
++            bool billboard = false;
++            std::bitset<RSP_MAX_VERTICES> loadedVertices;
++            std::array<hlslpp::float4x4, 16> matrices;
++            std::array<uint32_t, 16> matrixAddresses = {};
++        } jfg;
+         std::array<hlslpp::float4x4, RSP_MATRIX_STACK_SIZE> modelMatrixStack;
+         std::array<uint32_t, RSP_MATRIX_STACK_SIZE> modelMatrixSegmentedAddressStack;
+         std::array<uint32_t, RSP_MATRIX_STACK_SIZE> modelMatrixPhysicalAddressStack;
+@@ -253,6 +262,7 @@ namespace RT64 {
+         void setModelViewProjChanged(bool changed);
+         void setVertex(uint32_t address, uint32_t vtxCount, uint32_t dstIndex);
+         void setVertexPD(uint32_t address, uint32_t vtxCount, uint32_t dstIndex);
++        void setVertexJFG(uint32_t address, uint32_t vtxCount, uint32_t dstIndex);
+         void setVertexEXV1(uint32_t address, uint32_t vtxCount, uint32_t dstIndex);
+         void setVertexColorPD(uint32_t address);
+         void setVertexSegmentV1(bool isEnabled, uint32_t vertexElement, uint32_t vertexAddress, uint32_t baseSegmentAddress);
+@@ -304,4 +314,4 @@ namespace RT64 {
+         void setGBI(GBI *gbi);
+         void setNoN(bool NoN);
+     };
+-};
+\ No newline at end of file
++};

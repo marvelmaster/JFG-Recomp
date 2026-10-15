@@ -1,0 +1,69 @@
+diff --git a/librecomp/src/cont.cpp b/librecomp/src/cont.cpp
+index 7ad6c21..7dac190 100644
+--- a/librecomp/src/cont.cpp
++++ b/librecomp/src/cont.cpp
+@@ -45,7 +45,10 @@ extern "C" void osContStartReadData_recomp(uint8_t* rdram, recomp_context* ctx)
+ extern "C" void osContGetReadData_recomp(uint8_t* rdram, recomp_context* ctx) {
+     PTR(OSContPad) data = _arg<0, PTR(OSContPad)>(rdram, ctx);
+ 
+-    OSContPad dummy_data[MAXCONTROLLERS];
++    OSContPad dummy_data[MAXCONTROLLERS]{};
++    for (auto& pad : dummy_data) {
++        pad.err_no = 0x08; // CONT_NO_RESPONSE_ERROR, including unpolled channels.
++    }
+ 
+     osContGetReadData(dummy_data);
+ 
+@@ -54,8 +57,13 @@ extern "C" void osContGetReadData_recomp(uint8_t* rdram, recomp_context* ctx) {
+             MEM_H(6 * controller + 0, data) = dummy_data[controller].button;
+             MEM_B(6 * controller + 2, data) = dummy_data[controller].stick_x;
+             MEM_B(6 * controller + 3, data) = dummy_data[controller].stick_y;
+-            MEM_B(6 * controller + 4, data) = dummy_data[controller].err_no;
+         }
++        else {
++            MEM_H(6 * controller + 0, data) = 0;
++            MEM_B(6 * controller + 2, data) = 0;
++            MEM_B(6 * controller + 3, data) = 0;
++        }
++        MEM_B(6 * controller + 4, data) = dummy_data[controller].err_no;
+     }
+ }
+ 
+diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
+index 090cc42..8ddb93f 100644
+--- a/ultramodern/src/events.cpp
++++ b/ultramodern/src/events.cpp
+@@ -105,7 +105,19 @@ static struct {
+             regs.VI_X_SCALE_REG = common_regs->xScale; // TODO implement osViSetXScale
+             regs.VI_Y_SCALE_REG = yScale; // TODO implement osViSetYScale
+             regs.VI_STATUS_REG = next_state->control;
+-            
++            {
++                static int logged = 0;
++                static uint32_t last[8] = {};
++                const uint32_t cur[8] = { regs.VI_WIDTH_REG, regs.VI_H_START_REG, regs.VI_V_START_REG, regs.VI_X_SCALE_REG,
++                    regs.VI_Y_SCALE_REG, regs.VI_STATUS_REG, regs.VI_LEAP_REG, (uint32_t)field_regs->origin };
++                if (logged < 30 && memcmp(cur, last, sizeof(cur)) != 0 && getenv("JFG_TRACE_VI") != nullptr) {
++                    memcpy(last, cur, sizeof(cur));
++                    logged++;
++                    fprintf(stderr, "JFG_VI width=%X hStart=%08X vStart=%08X xScale=%08X yScale=%08X status=%08X leap=%08X origin=%X fb=%08X\n",
++                        cur[0], cur[1], cur[2], cur[3], cur[4], cur[5], cur[6], cur[7], (uint32_t)framebuffer);
++                }
++            }
++
+             // Swap VI states.
+             cur_state ^= 1;
+             *get_next_state() = *get_cur_state();
+diff --git a/ultramodern/src/input.cpp b/ultramodern/src/input.cpp
+index a170407..0146a59 100644
+--- a/ultramodern/src/input.cpp
++++ b/ultramodern/src/input.cpp
+@@ -72,7 +72,7 @@ static void __osContGetInitData(u8* pattern, OSContStatus *data) {
+             data[controller].status = device_info.connected_pak != ultramodern::input::Pak::None;
+             data[controller].err_no = 0x00;
+ 
+-            *pattern = 1 << controller;
++            *pattern |= 1 << controller;
+         }
+         else {
+             // Mark controller as not connected
