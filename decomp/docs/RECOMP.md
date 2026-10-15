@@ -1,7 +1,13 @@
 # Static recompilation (Windows build track)
 
-## CURRENT STATUS (2026-10-15 afternoon) - read this first
+## CURRENT STATUS (2026-10-15 late) - read this first
 Everything below this section is the chronological log (oldest first); the newest entries are at the end.
+
+**Debug quick start (2026-10-15 late, opt-in, default off):** `--jfg-level goldwood` redirects the first character
+select (mainChangeLevel 0x16D) to level 0x5D "Forest Day Sequence", char 1, the level the verified route loads. The
+redirect fired at script ms 63334; Goldwood HUD and player at 116 s. Menus are still scripted (not a menu-free start).
+`--jfg-skip-intro` and `--jfg-skip-cutscenes` are accepted but NOT implemented. Only one debug run so far; no 10x
+test, no toggles tested. The 60 Hz validation is paused (see HANDOFF.md Backlog).
 
 **Works (verified with screenshots, scripted input):** native Windows exe boots, intro logos, title, menus,
 Select Game / name entry, new game, intro cutscene, Goldwood level playable (move, jump, fire, aim), HUD,
@@ -736,3 +742,22 @@ Findings:
   goes through lib-patches) and the RT64 processDisplayLists / present waits (lib/rt64/src/hle/rt64_application.cpp:469),
   then repeat OFF and ON in both states.
 - Mode switch timing and the OFF<->ON toggle are still untested; the fast/slow switch needs a cause before any 60 Hz claim.
+
+## 2026-10-15 (late): debug quick start, level redirect verified once (Codex)
+- Route-verified level sequence (default run_to_goldwood.ps1, JFG_TRACE_LEVEL=1, mainChangeLevel args):
+  0x0, 0x15D, 0x7F, 0x16D char 1 (x5), 0x5D char 1, 0x5C char 1. Names from build/tmp/level_names.txt (decomp project):
+  0x15 "Forest First", 0x5C "Forest Day Landing", 0x5D "Forest Day Sequence", 0x16D "Boy Select Sq".
+  0x142 (new game / ship intro in the older notes) is NEVER called on this route, so it cannot be the trigger.
+- Added: `--jfg-level goldwood` (main.cpp main(); unknown names exit with an error, no fallback), `jfg_change_level`
+  hooked at mainChangeLevel entry 0x8004665C (jfg.us.toml). Redirect: first 0x16D -> level 0x5D, char 1.
+  Without the option the hook does nothing. `--jfg-skip-intro` and `--jfg-skip-cutscenes` print "not implemented".
+- Local derived RecompiledFuncs/funcs_12.c got the hook line by hand (not committed); regeneration from jfg.us.toml
+  must produce the same line. Regeneration was NOT run.
+- Runs (portable test folder build-cmake\run-jfg, saves stay there):
+  - runlogs/debug_start_goldwood_1.stderr.log: redirect at script ms 63334; 0x5C follows; HUD + player at 116 s
+    (runlogs/shot_1015_150803_116.png); game still running at script end (run_capture then stops it).
+  - runlogs/default_start_regression.stderr.log: no redirect, 18 script steps; Goldwood at 116 s (shot_1015_151401_116.png).
+- Not done: menu-free start (title and new game still scripted), intro skip, cutscene skip, 10 repeats, time to first
+  controllable frame, spawn/camera/state comparison, OFF->ON toggle tests, determinism analysis (RNG, timers).
+- Open risks: the redirect fires at character select, so the game's own new-game state setup before it still runs; char
+  id 1 = Juno is an inference from the "Boy Select" overlay name, not verified by screenshot.

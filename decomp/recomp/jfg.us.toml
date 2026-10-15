@@ -98,6 +98,13 @@ func = "joyRead"
 before_vram = 0x80043130
 text = "{ extern void jfg_gameplay_tick(uint8_t*, recomp_context*); jfg_gameplay_tick(rdram, ctx); }"
 
+# Debug quick start (--jfg-level): mainChangeLevel(level, char, ...) entry, US build 0x8004665C (jal sites in main.c,
+# anim.c, charControl.c). Only changes the arguments when --jfg-level is given; otherwise a no-op.
+[[patches.hook]]
+func = "mainChangeLevel"
+before_vram = 0x8004665C
+text = "{ extern void jfg_change_level(uint8_t*, recomp_context*); jfg_change_level(rdram, ctx); }"
+
 [[patches.hook]]
 func = "__scHandleRetrace"
 before_vram = 0x800506E8

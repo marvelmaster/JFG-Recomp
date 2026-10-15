@@ -16,7 +16,43 @@ Rules
 
 ---
 
-## Open task
+## Open task (aktiv): Debug quick start: intro skip, cutscene skip, direct level load (2026-10-15)
+
+- **Status:** Teilweise umgesetzt. Nicht fertig: siehe "Last result" unten (Done-when-Punkte 1-3, 5, 9 offen).
+- **Goal:** Reproduzierbarer Debug-Schnellstart für den nativen Windows-Port: `--jfg-skip-intro`, `--jfg-skip-cutscenes`,
+  `--jfg-level goldwood`, optional `--jfg-test-start goldwood`. Ein echter Direct Level Load ist das Hauptziel;
+  schnelleres Durchklicken der Menüs nur Zwischenlösung. Alles Debug, standardmäßig aus.
+- **Analysis / root cause:** Die Default-Route (tools/run_to_goldwood.ps1) lädt die Level-Sequenz 0x0, 0x15D, 0x7F, 0x16D
+  (Charakterwahl, char 1), 0x5D, 0x5C. Goldwood-Gameplay erscheint bei etwa 105-112 s. Ein Direktsprung aus dem
+  Haupt-Thread hängt laut früherer Notiz (NONMATCHING_BUILD.md:158). Annahmen zu Overlays, Save-State und
+  Initialisierungsreihenfolge sind nicht geprüft.
+- **Planned changes:** Phase 1 Startup-/Level-Loader untersuchen (main.c, runLink.c, sched.c, controller.c,
+  jfg.us.toml, Level-/Spawn-/Save-/Cutscene-Funktionen). Phase 2 CLI-Parser mit Fehlermeldung für unbekannte Level,
+  kein stiller Fallback. Phase 3 Intro-Skip nach der Initialisierung. Phase 4 Direct Level Load Goldwood: gültiger
+  Spawn außerhalb des Wassers, keine laufende Cutscene, kein Savegame-Schreiben. Phase 5 Cutscene-Skip nur für die
+  Goldwood-Landungssequenz, falls generisch nicht sicher; keine globalen Hooks, keine Timer auf null setzen.
+  Phase 6 tools/test_debug_start.ps1. Phase 7 Determinismus protokollieren (RNG, Zeitinitialisierung).
+- **Must not change:** Keine ROMs, RecompiledFuncs/, rsp/n_aspMain.cpp, Savegames committen. Normaler Start ohne Argumente
+  unverändert. Keine VI-/Delta-Manipulation, keine 60-Hz-Logik, keine RT64-Änderung ohne Notwendigkeit, keine
+  pauschale Deaktivierung von Cutscene-Triggern, keine permanenten Cheats.
+- **Tests:** TEST 1 normaler Start; TEST 2 Intro-Skip; TEST 3 `--jfg-level goldwood` (Player, Kamera, HUD, Bewegung,
+  Sprung, Schuss); TEST 4 mit `--jfg-skip-cutscenes`; TEST 5 zehn aufeinanderfolgende Starts (Start bis erster
+  steuerbarer Frame, Spawn, Kamera, Game-State, Updates, Abstürze); TEST 6 30/60-Hz mit identischem Start; TEST 7
+  Screenshots; TEST 8 build_jfg.bat build.
+- **Done when:** 1 Direct Level Load Goldwood funktioniert. 2 Intro-Skip funktioniert oder Einschränkung nachgewiesen.
+  3 Cutscene-Skip für Goldwood oder ausdrücklich als nicht sicher dokumentiert. 4 Spieler steuerbar nach Debug-Start.
+  5 Zehn Starts hintereinander OK. 6 Normaler Start unverändert. 7 Keine Savegames ungewollt verändert. 8 Testskript
+  vorhanden. 9 Startzeiten und Screenshots dokumentiert. 10 build_jfg.bat erfolgreich. 11 RECOMP.md datierter Eintrag.
+  12 CURRENT STATUS aktualisiert. 13 Last result ausgefüllt. 14 Diff geprüft. 15 Commit nach jfg/main gepusht
+  (marvelmaster/JFG-Recomp, nie origin/BanjoRecomp).
+- **Anweisungen an Codex:** Vor jeder Änderung den echten Code prüfen. Keine geratenen ROM-Adressen oder Speicherwerte.
+  Bei lib/-Änderungen lib-patches neu erzeugen. Die genehmigte Instrumentierung in N64ModernRuntime/RT64 erst nach
+  diesem Task fortsetzen. Nach dem Push auf den Planner warten.
+
+## Backlog (PAUSIERT, nicht erledigt): Experimental 60 Hz gameplay
+Der vollständige Text dieses Tasks steht unverändert unten. Stand und Messungen: RECOMP.md Einträge 2026-10-15
+(afternoon, late afternoon). Commits: 9444447, ed1f20d.
+
 **Titel:** Experimental 60 Hz gameplay: audit, A/B validation and targeted fixes (2026-10-15)
 
 - **Goal:**
@@ -693,7 +729,44 @@ Rules
 
 Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über HANDOFF.md und RECOMP.md im GitHub-Repo zurückmelden.
 
-## Last result
+## Last result (Debug quick start, 2026-10-15)
+
+- **Commit(s):** see the commit that contains this line (`git log -1`, message "Debug quick start ...").
+- **What was changed:**
+  - `src/main/main.cpp` `main()`: `--jfg-level <name>` (only `goldwood`; unknown name = error message and exit, no fallback);
+    `--jfg-skip-intro` and `--jfg-skip-cutscenes` are accepted but print "not implemented yet, ignored".
+  - `jfg_change_level()` (main.cpp), hooked on `mainChangeLevel` entry 0x8004665C via `decomp/recomp/jfg.us.toml`.
+    With `--jfg-level`, the first character-select request (0x16D) is redirected to level 0x5D, char 1.
+    Without the option: no change. `JFG_TRACE_LEVEL=1` logs every call.
+  - `tools/test_debug_start.ps1` (new), runs the scripted title/menu route with the debug argument.
+  - Local derived file `RecompiledFuncs/funcs_12.c`: the same hook line inserted by hand (not committed; a regeneration
+    from `decomp/recomp/jfg.us.toml` must produce it again. Not regenerated in this task).
+- **Verified (built / tested / screenshots):**
+  - `build_jfg.bat build`: exit 0.
+  - Default route, JFG_TRACE_LEVEL: level sequence 0x0, 0x15D, 0x7F, 0x16D(char 1)x5, 0x5D(char 1). 0x142 is NEVER called.
+    So the NM_DIRECT_START idea (0x142 = new game) does not apply to this build's route.
+  - `--jfg-level goldwood` run (runlogs/debug_start_goldwood_1.stderr.log): redirect at script ms 63334 (0x16D -> 0x5D,
+    char 1), then 0x5C (Forest Day Landing) follows. Goldwood gameplay HUD and player visible at 116 s
+    (runlogs/shot_1015_150803_116.png). Game still running at script end (no crash, one run only).
+  - Default start regression (runlogs/default_start_regression.stderr.log): no redirect, 18 script steps, Goldwood
+    at 116 s (runlogs/shot_1015_151401_116.png).
+  - Not measured: the time to first controllable frame. Not repeated 10 times. Not tested with OFF->ON toggles.
+- **Deviations from the plan and why:**
+  - Level-id 0x15 from the earlier decomp notes ("Forest First") was NOT used. The route-verified level is 0x5D
+    "Forest Day Sequence" (name table build/tmp/level_names.txt in the decomp project).
+  - Redirect trigger is 0x16D (character select), not 0x142, because 0x142 is never called on the verified route.
+  - Title and new-game menus are still driven by the scripted input. That is an intermediate solution, not a
+    menu-free Direct Level Load. The main goal (menu-free start) is NOT achieved.
+  - Intro skip and cutscene skip are NOT implemented (flags only print a message).
+  - Savegames: test runs use the portable test folder build-cmake\run-jfg, not the user's own saves. Not checked
+    file-by-file whether a new game writes a save slot there.
+- **Open questions for the planner:**
+  - Which game-state initialisation does new game perform before 0x16D, and can a menu-free start call mainChangeLevel
+    (0x5D, char 1) directly after it? The old direct start from mainThread hung (NONMATCHING_BUILD.md:158).
+  - Is char id 1 Juno (boy)? Inferred from the 0x16D "Boy Select" overlay name, not verified by a screenshot.
+  - Intro and cutscene skip: which state variables end the logo sequence and the Goldwood landing (0x5C)?
+
+## Previous Last result (60 Hz, paused)
 _Partial. "Done when" is NOT met. Details in `decomp/docs/RECOMP.md` (entry 2026-10-15 afternoon)._
 
 - **Commit(s):** one WIP commit "WIP: validate experimental 60 Hz gameplay" on `jfg/main` (the commit that contains this

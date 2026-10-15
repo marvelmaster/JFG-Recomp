@@ -730,6 +730,30 @@ extern "C" void jfg_gameplay_tick(uint8_t* rdram, recomp_context* ctx) {
     }
 }
 
+// ---- Debug quick start (--jfg-level, default off) ----
+// mainChangeLevel(level, char, ...) is hooked at entry (decomp/recomp/jfg.us.toml). Its level 0x142 is the new-game
+// request (ship intro). With --jfg-level the request is redirected to the chosen level and character; every other
+// call passes through unchanged. Without the option nothing is changed.
+static int jfg_debug_level = -1;
+static int jfg_debug_char = -1;
+extern "C" void jfg_change_level(uint8_t* rdram, recomp_context* ctx) {
+    static const bool trace = std::getenv("JFG_TRACE_LEVEL") != nullptr;
+    const int32_t level = (int32_t)ctx->r4;
+    if (trace) jfg_logf("JFG_LEVEL mainChangeLevel level=0x%X char=%d a2=%d a3=%d\n",
+        level, (int32_t)ctx->r5, (int32_t)ctx->r6, (int32_t)ctx->r7);
+    // Trigger: the first character-select request (0x16D "Boy Select Sq") after the start. The verified route in
+    // run_to_goldwood.ps1 never calls 0x142, so 0x142 alone would not fire. Only the first call is redirected.
+    static bool redirected = false;
+    if (jfg_debug_level >= 0 && !redirected && level == 0x16D) {
+        redirected = true;
+        const uint64_t now = SDL_GetTicks64();
+        fprintf(stderr, "[JFG] --jfg-level: character select (0x16D) redirected to level 0x%X, char %d at script ms %llu.\n",
+            jfg_debug_level, jfg_debug_char, (unsigned long long)(jfg_script_begin_ms ? now - jfg_script_begin_ms : 0));
+        ctx->r4 = (gpr)(int32_t)jfg_debug_level;
+        ctx->r5 = (gpr)(int32_t)jfg_debug_char;
+    }
+}
+
 // Adaptive VI state of gameVi.c (viFrameRateReset / viFrameSync), verified against RecompiledFuncs:
 // D_800FECAC_B189C = minimum frames per update (1/2/3), D_800FECAB_B189B = short-frame counter,
 // D_800FECAD_B189D = "no stable frame yet" flag. viFrameSync reads the minimum at 0x80055104 (s1 = 0x800FECAC).
@@ -1167,6 +1191,21 @@ int main(int argc, char** argv) {
     fprintf(stderr, "[JFG] Native startup reached.\n");
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--start-game") == 0) jfg_auto_start = true;
+        if (strcmp(argv[i], "--jfg-level") == 0) {
+            const char* name = (i + 1 < argc) ? argv[++i] : "";
+            if (strcmp(name, "goldwood") == 0) {
+                // Level and character that the verified run_to_goldwood route loads (JFG_TRACE_LEVEL, RECOMP.md):
+                // 0x5D "Forest Day Sequence" with char 1. The name table is build/tmp/level_names.txt (decomp project).
+                jfg_debug_level = 0x5D;
+                jfg_debug_char = 1;
+            } else {
+                fprintf(stderr, "[JFG] Unknown --jfg-level '%s'. Supported: goldwood. Nothing started.\n", name);
+                return EXIT_FAILURE;
+            }
+        }
+        if (strcmp(argv[i], "--jfg-skip-intro") == 0 || strcmp(argv[i], "--jfg-skip-cutscenes") == 0) {
+            fprintf(stderr, "[JFG] %s: not implemented yet, ignored.\n", argv[i]);
+        }
         if (strcmp(argv[i], "--test-start-button") == 0) {
             jfg_auto_start = true;
             jfg_test_start_button = true;
