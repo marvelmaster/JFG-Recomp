@@ -18,7 +18,8 @@ Rules
 
 ## Open task (aktiv): Debug quick start: intro skip, cutscene skip, direct level load (2026-10-15)
 
-- **Status:** Teilweise umgesetzt. Nicht fertig: siehe "Last result" unten (Done-when-Punkte 1-3, 5, 9 offen).
+- **Status:** Menüfreier Goldwood-Start umgesetzt und getestet (`--jfg-test-start goldwood` / `goldwood-landing`, 2026-10-15
+  evening). Offen: Done-when 2 (Intro-Skip) und 3 (Cutscene-Skip, nur als `goldwood-landing` für Goldwood). Siehe "Last result".
 - **Goal:** Reproduzierbarer Debug-Schnellstart für den nativen Windows-Port: `--jfg-skip-intro`, `--jfg-skip-cutscenes`,
   `--jfg-level goldwood`, optional `--jfg-test-start goldwood`. Ein echter Direct Level Load ist das Hauptziel;
   schnelleres Durchklicken der Menüs nur Zwischenlösung. Alles Debug, standardmäßig aus.
@@ -729,7 +730,42 @@ Der vollständige Text dieses Tasks steht unverändert unten. Stand und Messunge
 
 Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über HANDOFF.md und RECOMP.md im GitHub-Repo zurückmelden.
 
-## Last result (process investigation, 2026-10-15, WIP): double start is real, harness now refuses and binds PID
+## Last result (Norton-off sprint, 2026-10-15 evening, WIP): baseline clean, 0x16D resolved, menu-free start works
+
+- **Commit(s):** 8035b83, 0611445 and the commit that contains this line (`git log -3`), all on jfg/main.
+- **Build:** `build_jfg.bat build` exit 0 after every change (last build 20:19).
+- **P1 Norton-free baseline [Trace]:** freshly linked exe (19:58:35), 3 runs (A JFG_NO_AUDIO, B default audio, C 130 s
+  debug start): each exactly one JFGRecompiled.exe (PIDs 6416, 42780, 21780; parent = the harness cmd.exe), RUN_VALID=1,
+  max_instances_seen=1, a 250 ms process watcher saw one PID per run, no restart. First start = second start. The double
+  start/restart is therefore tied to the Norton path (user observation); no Norton debugging done. Default audio works again.
+- **P2 repeated tests (all RUN_VALID=1):** `--jfg-level goldwood` PASS (redirect 63369 ms, 0x5D char 1, walk 563, saves 0
+  changed); default route with level/trap/gameplay trace (levels 0x0,0x0,0x15D,0x0,0x7F,0x16D x3,0x5D,0x5C; save hashes
+  equal); 2 normal starts PASS (title 0x15D, no test start). Screenshots per PID. 60 Hz not repeated.
+- **P3 analysis [Trace+Code+ROM], details RECOMP.md "evening, Norton off":**
+  - New trace at the trampoline's `jr $t8` (0x800546AC): the ROM table entry gives (overlay, offset); overlay = "Module N"
+    of jfg_us_syms_full.txt, every offset matched a symbol exactly. Previous overlay indices 57/41 were off by one (58/42).
+  - 0x16D: caller frontCharSelect (module 58 +0x134); the target at 0x803434EC is frontCharBadge (41 +0x8B4), not a level
+    function. 0x16D = char 1's default start level (ROM table 0x800A3314: 0x42, 0x16D, 0x3D, 0x42). Char 1 = Juno (screenshot).
+  - trackInit: levelInit calls the trampoline at 0x8004406C -> trackInit -> objSetupPlayers(spawn 0). Generated code does
+    not write ra on direct calls, so ra in traces is stale except right after a trampoline call.
+  - Command 0x7A: the next level is a literal in the level script (cmd[2] & 0xFFF); 0x16D's script -> 0x5D, 0x5D's -> 0x5C.
+- **P4 menu-free start [Code+Trace]:** `--jfg-test-start goldwood`: at the first title request 0x15D (made by the Rare logo
+  page without input) the hook calls mainSetDefaultGame + mainSetMode(0) and requests (0x16D, char 1, region 0, 0x10) like
+  frontCharSelect. No menu input, no save I/O, normal start unchanged. `goldwood-landing` requests 0x5C directly.
+  Results (tools/test_menu_free_start.ps1, saves created/deleted/changed = 0 in every run):
+  - goldwood: 10 runs PASS (1 x 100 s + 9 x 75 s), 0x5C active at 49.5-50.2 s, player moves 0.09-0.56 s
+    after the load (UP every 1 s). HUD/camera: screenshot at 20 s of the landing variant shows HUD and camera behind Juno.
+  - goldwood-landing: 5 runs PASS, 0x5C at 16.4-16.9 s. Game struct at the 0x5C load byte-identical to the full sequence.
+  - Fresh-game behaviour: walking to Magnus starts his welcome dialogue, which waits for A (not a hang).
+- **P5 harness:** test_menu_free_start.ps1 checks active level (levelInit), created/deleted/changed saves by name+hash,
+  RUN_VALID/max_instances, own PID log/trace/screenshot, -Normal regression. Exit codes 0/1/2.
+- **Not done / open:** intro skip and cutscene skip flags (still refused); exact first controllable frame and the input
+  gate variable; globals outside the game struct for goldwood-landing; 0x7A script offset/condition; regeneration of
+  RecompiledFuncs with the three new hooks (inserted by hand, toml has them); 60 Hz.
+- **Next step:** compare global flags/animseq state between goldwood and goldwood-landing; then decide whether
+  goldwood-landing can be the default for `--jfg-test-start goldwood`. Then intro skip with an earlier trigger.
+
+## Previous Last result (process investigation, 2026-10-15, WIP): double start is real, harness now refuses and binds PID
 
 - **Commit(s):** the commit that contains this line (`git log -1`).
 - **Proven:** two JFGRecompiled.exe processes started at 17:29:09 (PIDs 48780 and 32160, 0.3 s apart), same exe (linked
@@ -885,4 +921,5 @@ _Partial. "Done when" is NOT met. Details in `decomp/docs/RECOMP.md` (entry 2026
 _(either side; delete when answered)_
 
 ## History
+- 2026-10-15 20:35 Norton-off sprint: clean single-process baseline, 0x16D resolved, menu-free `--jfg-test-start goldwood` (10/10 PASS) and `goldwood-landing` (5/5 PASS) (Claude).
 - 2026-10-15 13:00 Repo created; state: playable to Goldwood, mouse aim, optional mouse camera; 60 Hz gameplay checkbox in progress (Codex, 12:12).

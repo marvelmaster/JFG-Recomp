@@ -1,16 +1,28 @@
 # Static recompilation (Windows build track)
 
-## CURRENT STATUS (2026-10-15 late) - read this first
+## CURRENT STATUS (2026-10-15 evening) - read this first
 Everything below this section is the chronological log (oldest first); the newest entries are at the end.
 
-**Debug quick start (2026-10-15 late, opt-in, default off):** `--jfg-level goldwood` redirects the first character
-select (mainChangeLevel 0x16D) to level 0x5D "Forest Day Sequence", char 1, the level the verified route loads. The
-redirect fired at script ms 63334; Goldwood HUD and player at 116 s. Menus are still scripted (not a menu-free start).
-`--jfg-skip-intro`, `--jfg-skip-cutscenes` and `--jfg-test-start` now refuse with "not implemented yet" (phase 2 review,
-entry 2026-10-15 phase 2). The redirect is verified on the final build (PASS, walk 594 units, saves unchanged), but it
-is still a legacy diagnostic: the title and menu route is scripted. BLOCKER: the initialisation chain before 0x16D and
-the callers of 0x5D/0x5C are not yet reconstructed, so a menu-free Goldwood start is not implemented. The 60 Hz
-validation is paused (see HANDOFF.md Backlog).
+**Menu-free Goldwood start works (2026-10-15 evening, opt-in, default off, entry "evening, Norton off"):**
+`--jfg-test-start goldwood` replaces the automatic title request (0x15D) with the game's own new-game state
+(mainSetDefaultGame, mainSetMode(0)) and the character-select request (0x16D, char 1 = Juno, mode 0x10). The game then
+plays 0x16D -> 0x5D -> 0x5C by itself; 0x5C is active at about 50 s, the player is controllable within about 0.5 s of
+that load. `--jfg-test-start goldwood-landing` requests 0x5C directly (about 17 s); the game struct at the 0x5C load is
+byte-identical to the full sequence (globals outside it not compared). No menu input, no save read or written.
+tools/test_menu_free_start.ps1: 10 goldwood runs (see log), 5 landing runs, 2 normal starts, all PASS with RUN_VALID=1.
+Still open: intro/cutscene skip flags (refused), exact first controllable frame, state outside the game struct for the
+landing variant, Magnus welcome dialogue of a fresh game waits for A (normal game behaviour).
+
+**Process / Norton (2026-10-15 evening):** with Norton disabled by the user, three runs of a freshly linked exe each
+showed exactly one process (RUN_VALID=1, max_instances_seen=1, watcher: one PID). The earlier double start and restart
+belong to the Norton path (user observation). Runs before 19:00 remain unreliable; the measurements were repeated.
+
+**0x16D resolved:** caller frontCharSelect (module 58); 0x16D is char 1's default start level (ROM table 0x800A3314).
+The earlier "intermediate target" at 0x803434EC is frontCharBadge (module 41 +0x8B4). Overlay numbers in the
+trampoline's ROM table entry equal "Module N" in jfg_us_syms_full.txt (all offsets matched exactly).
+
+**Legacy:** `--jfg-level goldwood` (scripted menus, redirect of 0x16D to 0x5D) still works (PASS, RUN_VALID=1).
+The 60 Hz validation is paused (see HANDOFF.md Backlog).
 
 **Works (verified with screenshots, scripted input):** native Windows exe boots, intro logos, title, menus,
 Select Game / name entry, new game, intro cutscene, Goldwood level playable (move, jump, fire, aim), HUD,
@@ -1030,3 +1042,58 @@ by the user for about one hour (not configured by us).
   Trace: anim group 0, region 0, mode 16 for both. Before each 0x7A level change the trampoline calls module 111 +0
   (jal 0x80077B0C; the module's only symbol name, osCartTest3_6105, is not meaningful).
 - Not done: the script offset / sequence id of the command and the condition that runs it (command list source).
+
+### 7. Menu-free start `--jfg-test-start goldwood` / `goldwood-landing` (opt-in, default off)  [Code + Trace]
+- Implementation (src/main/main.cpp jfg_change_level, hook at mainChangeLevel entry): trigger = the first request of
+  level 0x15D (title page, mode 3). It is made by the Rare logo page without any input (trace: 57+0xC0 frontRarepage).
+  At that call the hook runs the game's own functions on the game struct (mainGetGame):
+  mainSetDefaultGame(game) (default game, char records with start levels from 0x800A3314), mainSetMode(0) (as
+  frontCharSelect), and replaces the request with the frontCharSelect request: (record+0x74 >> 5 = 0x16D, char 1,
+  region 0, mode 0x10; stack args 1, 0 are the same in both calls). The title page is never loaded. No save is read or
+  written; mainSaveGame is not called. The registers are restored after the helper calls (only memory effects remain).
+- `goldwood-landing`: same, but requests 0x5C directly with the arguments of command 0x7A in 0x5D (region 0, mode 0x10;
+  anim group 0, which mainChangeLevel sets itself, main.c:1199). This skips the cutscene levels 0x16D and 0x5D.
+- Refusals: unknown name -> exit 1; `--jfg-test-start` together with `--jfg-level` -> exit 1. `--jfg-skip-intro` and
+  `--jfg-skip-cutscenes` are still refused (not implemented).
+- New test: tools/test_menu_free_start.ps1 (PID-bound via run_capture.ps1). Checks RUN_VALID=1 and
+  max_instances_seen=1, the start line, the ACTIVE level sequence from levelInit (not the request), char 1 for 0x5C,
+  objSetupPlayers after the 0x5C load, player moved after the 0x5C load (first frame > 1 unit horizontally; input is
+  UP 0.4 s every second from 30 s to 69 s, no menu input), save folder: created / deleted / changed files (names + SHA256),
+  screenshot of this PID. -Normal checks the default start (title 0x15D reached, no 0x16D, no test start).
+
+Results (all RUN_VALID=1, max_instances_seen=1, saves_created=0 deleted=0 changed=0):
+| Variant | Runs | Levels (levelInit) | 0x5C active at (script ms) | first move (ms) |
+|---|---|---|---|---|
+| goldwood | 1 (100 s, earlier input) + 5 + 1 (dump) + 3 (75 s) = 10 PASS | 0x0,(0x0),0x16D,0x5D,0x5C | 49530-50175 | 50052-50299 (0.09-0.56 s after the load; UP every 1 s) |
+| goldwood-landing | 1 (75 s, dump) + 4 (45 s) = 5 PASS | 0x0,(0x0),0x5C | 16441-16942 | 30051-30181 (bounded by the input script, UP starts at 30 s) |
+| normal (no flag) | 2 (40 s) PASS | 0x0,0x0,0x15D | - | - |
+- Script ms counts from the first pad poll (JFG_INPUT_SCRIPT time base); the process starts about 1.5 s earlier.
+  The default scripted route needs about 90 s to 0x5C (trace 0x5C request at line 90136 of the route trace, earlier
+  measurements 105-112 s to gameplay). Menu-free: 0x5C at about 50 s (goldwood) and 17 s (goldwood-landing).
+- Player control: in the goldwood runs the player moves in the first UP window after the 0x5C load (50.0-50.3 s). In the
+  first 100 s run (UP at 50 s, 60 s, ...) the player walked from z=199 to z=1176 and then stood at Magnus, whose welcome
+  dialogue ("Welcome, Juno!") waits for A. That dialogue is triggered by walking to him; it is normal new-game behaviour
+  of 0x5C (the save-slot route does not show it [Vermutung: progress flag in that save]). So the first controllable frame
+  is within about 0.5 s of the 0x5C load; the exact frame was not measured with finer input.
+- State comparison (JFG_DUMP_GAME=1, new): the game struct (0x538 bytes, the size the save path copies) at the 0x5C load
+  is byte-identical in goldwood-landing and in goldwood (full 0x16D -> 0x5D -> 0x5C sequence): 0 bytes differ. So the two
+  cutscene levels do not change the game struct before 0x5C. NOT compared: globals outside the game struct (global flags,
+  animseq state, object and camera state). The landing variant is therefore marked "goldwood struct-identical", not
+  "proven identical".
+- goldwood-landing at 20 s (runlogs/shot_1015_202407831_20.png): HUD (weapon, ammo 100, health), camera behind Juno,
+  Goldwood start pool. Three landing runs gave the same walk distance 921.3 (same input) -> deterministic start.
+- Screenshots (not committed): runlogs/shot_1015_200706620_75.png (Magnus dialogue, char 1 = Juno),
+  runlogs/shot_1015_202109467_70.png (landing variant, same scene). The dump trace of the first landing run was
+  overwritten by the repeat series (same tag); the diff result above was taken before.
+
+### 8. Open points (not guessed)
+- Intro skip (`--jfg-skip-intro`) and cutscene skip (`--jfg-skip-cutscenes`): still refused. The menu-free start replaces
+  the title at about 16 s (Rare logo page runs first); an earlier trigger (first 0x0 request) was not tried.
+- Exact first controllable frame: only bounded (UP every 1 s -> movement within 0.09-0.56 s after the 0x5C load).
+  The input gate variable itself was not identified.
+- goldwood-landing: compare state outside the game struct (global flags, animseq/object/camera state) with the full
+  sequence before calling it proven equivalent.
+- Command 0x7A: script offset, sequence id and the condition that runs it (command list source) not traced.
+- Module 111 +0 is called through the trampoline before each 0x7A level change; its role is not analysed.
+- Hooks for jfg_trap_target, levelInit and objSetupPlayers are in jfg.us.toml and were inserted BY HAND into the local
+  RecompiledFuncs (funcs_17.c, funcs_11.c, funcs_1.c). A regular regeneration must reproduce them (not run).
