@@ -757,10 +757,12 @@ Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über 
     after the load (UP every 1 s). HUD/camera: screenshot at 20 s of the landing variant shows HUD and camera behind Juno.
   - goldwood-landing: 5 runs PASS, 0x5C at 16.4-16.9 s. Game struct at the 0x5C load byte-identical to the full sequence.
   - Fresh-game behaviour: walking to Magnus starts his welcome dialogue, which waits for A (not a hang).
+  - First controllable frame (UP held before the load, landing variant): movement 3 updates / 43 ms after the 0x5C levelInit.
+  - Game flags are inside the game struct (main.c:1952), so the byte-identical comparison covers them.
 - **P5 harness:** test_menu_free_start.ps1 checks active level (levelInit), created/deleted/changed saves by name+hash,
   RUN_VALID/max_instances, own PID log/trace/screenshot, -Normal regression. Exit codes 0/1/2.
-- **Not done / open:** intro skip and cutscene skip flags (still refused); exact first controllable frame and the input
-  gate variable; globals outside the game struct for goldwood-landing; 0x7A script offset/condition; regeneration of
+- **Not done / open:** intro skip and cutscene skip flags (still refused); globals outside the game struct for
+  goldwood-landing (animseq, object, camera, audio state); 0x7A script offset/condition; regeneration of
   RecompiledFuncs with the three new hooks (inserted by hand, toml has them); 60 Hz.
 - **Next step:** compare global flags/animseq state between goldwood and goldwood-landing; then decide whether
   goldwood-landing can be the default for `--jfg-test-start goldwood`. Then intro skip with an earlier trigger.

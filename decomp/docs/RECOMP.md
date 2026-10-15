@@ -1097,3 +1097,12 @@ Results (all RUN_VALID=1, max_instances_seen=1, saves_created=0 deleted=0 change
 - Module 111 +0 is called through the trampoline before each 0x7A level change; its role is not analysed.
 - Hooks for jfg_trap_target, levelInit and objSetupPlayers are in jfg.us.toml and were inserted BY HAND into the local
   RecompiledFuncs (funcs_17.c, funcs_11.c, funcs_1.c). A regular regeneration must reproduce them (not run).
+
+### 9. First controllable frame (goldwood-landing, UP held from 15 s, run 20:33:00 PID 25752, RUN_VALID=1)  [Trace]
+- 0x5C levelInit at script ms 16443 (last gameplay update before it: frame 492). First player sample frame 493 at spawn
+  (19.0, -90.0, 199.0); first horizontal movement frame 495 (16486 ms): 3 gameplay updates / 43 ms after levelInit.
+  So in 0x5C there is no further input gate after the load: input moves the player from the second update with a
+  player. Saves unchanged. Trace runlogs/first_control_landing.trace.log (not committed).
+- Game flags (mainGetGameFlag) live in the game struct (game->pad[0x30 + flag/8], main.c:1952), so they are covered by
+  the byte-identical game struct comparison of section 7. mainSaveGlobalFlags only sets a save request bit
+  (load_save_flags |= 0x02000000, main.c:2219); no save file changed in any run.
