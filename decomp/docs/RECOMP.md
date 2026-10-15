@@ -21,7 +21,7 @@ The earlier "intermediate target" at 0x803434EC is frontCharBadge (module 41 +0x
 trampoline's ROM table entry equal "Module N" in jfg_us_syms_full.txt (all offsets matched exactly).
 
 **Legacy:** `--jfg-level goldwood` (scripted menus, redirect of 0x16D to 0x5D) still works (PASS, RUN_VALID=1).
-The 60 Hz validation is paused (see HANDOFF.md Backlog).
+The 60 Hz work continued 2026-10-15 late night (see below and the dated entry).
 
 **Works (verified with screenshots, scripted input):** native Windows exe boots, intro logos, title, menus,
 Select Game / name entry, new game, intro cutscene, Goldwood level playable (move, jump, fire, aim), HUD,
@@ -41,21 +41,15 @@ Not yet tried by a human with real mouse/keyboard; audio never listened to.
    3-6 ms. Real reduction only by running the game logic faster (planned: optional 60 Hz logic, see below).
 4. Nothing is committed to git; changes span the main project and the RT64 / N64ModernRuntime / N64Recomp submodules.
 
-**In progress: 60 Hz validation is NOT complete (experimental checkbox, default OFF, stays experimental).**
-- Measured on Goldwood (scripted 128 s, tools/test_60hz_gameplay.ps1, afternoon entry): 30 Hz 2995 updates (23.4/s,
-  delta 2-3); 60 Hz 3055 (committed HEAD) and 3117 (current WIP) updates (about 24/s, delta mostly 2-3). One further
-  60 Hz run gave 1751 (13.7/s, delta 4-6) that was not reproduced; cause unknown.
-- So **60 updates/s was not reached stably** on these runs and the mode gives no update-rate gain over 30 Hz here.
-  The earlier "delta=1 / ~16.7 ms" claim (12:19) was not reproduced. The game timer runs at the same speed in both
-  modes (about 7640 VI ticks per 128 s).
-- This is NOT yet a hardware limit. Loop timing (JFG_TRACE_LOOP, "late afternoon" entry): OFF and ON show the same loop
-  period in each state; viFrameSync's final wait (B) is quantised to whole VI periods; the game plus display-list part
-  (A) is about one VI in the fast state. Fast and slow states occur with the same binary; their cause is unknown.
-  Still not separated: game CPU vs blocking inside A, and RT64 processDisplayLists / present waits.
-- Fixed in WIP: adaptive VI minimum now restored exactly on disable (was a fixed 2); mode changes only at viFrameSync.
-  OFF<->ON toggling, scene and pause changes are not yet tested.
-- Not validated: XYZ speed, jump, animation, timers, camera, particles, cutscenes, audio (not listened to), enemy AI,
-  input latency, long-run stability.
+**60 Hz gameplay (2026-10-15 late night, experimental, default OFF, entry "60 Hz gameplay audit"):**
+- Root cause of the old 20/10 updates/s in BOTH modes found and fixed in the runtime (SI completion message requeued
+  forever by the idle thread, delaying RDP done by about two VIs). Now 30 Hz mode 30.0 updates/s (delta 2) and 60 Hz mode
+  60.0 updates/s (delta 1) on the fast Goldwood start; the default mode is therefore faster than before (original 30 fps).
+- Time-correct with 60 Hz [Trace]: walking speed (-0.1 %), walk-cycle animation (period 567 ms in both), game timer and
+  41 of 44 static counters, cutscene sequence 0x16D -> 0x5D -> 0x5C (-0.25 %), mode switches during gameplay.
+  Fixed: texture scroll (was twice as fast). NOT fixed: jumps are 6-22 % higher and about 35-70 ms longer (semi-implicit
+  gravity integration in the character overlays). Not measured: enemies/AI, projectiles, particles, camera response,
+  audio by ear. Gameplay reaction time 15-20 ms shorter with 60 Hz; photon latency not measured.
 RT64 decoded Juno matrices match CPU for 252 captured loads; remaining model issue is downstream. See 12:17 and later entries.
 
 **Where things are**
@@ -1218,3 +1212,104 @@ Times of the 10 fast runs (script ms = from the game's first pad poll; process m
 - 22:03: `test_started` is now set only after the game-pointer check. With an invalid pointer the request passes
   unchanged (registers restored, stack untouched) and the later 0x15D fallback trigger can still start the test.
   Re-test (JFG_NO_AUDIO=1, RUN_VALID=1): fast 3/3 PASS (0x5C at 507-772 ms), normal 1/1 PASS, saves unchanged.
+
+## 2026-10-15 (late night): 60 Hz gameplay audit, runtime fix, A/B on the fast Goldwood start (Claude)
+Labels: [Code] decomp source / generated code / runtime source; [Trace] measured, PID-bound runs (RUN_VALID=1,
+max_instances_seen=1, saves unchanged); [Vermutung] not proven. All A/B runs: `--jfg-test-start goldwood`, JFG_NO_AUDIO=1
+(the WASAPI modal box is back on this PC; test infrastructure only, audio NOT verified by listening),
+JFG_60HZ_GAMEPLAY=0/1, identical wall-clock input (tools/test_60hz_ab.ps1, tools/analyze_60hz.py).
+
+### 1. Architecture and hooks (checked against generated code, funcs_16.c / funcs_17.c)  [Code]
+- Main loop (decomp main.c:600-736): joyRead(delayDat) ... game update with delayDat ... rcpWaitDP() (waits for the
+  previous frame's RDP done) ... trackUpdateTextureScroll() ... delayDat = viFrameSync(...) ... clamp (delayDat >= 7 -> 6;
+  after a level change delayDat = 2 and viFrameRateReset). delayDat = number of VIs since the previous update (unit 1/60 s),
+  stored at 0x800A3374 (generated: `sw $v0, 0x3374($at)` at 0x800457CC).
+- viFrameSync (0x80054FBC): counts pending VI messages, adapts a minimum frame count (0x800FECAC: 2, 3 under load, 1 when
+  the game's own `runInOneFrame` 0x800FECCC is set), waits until the minimum, swaps, waits one more retrace.
+  Hook 0x80055104 = `lbu $t8, 0($s1)` with $s1 = 0x800FECAC, directly after the runInOneFrame branch: jfg_frame_sync_limit
+  writes 1 there while 60 Hz is active. On enable it saves the three adaptive bytes (0x800FECAC/AB/AD), on disable it
+  restores them (no fixed 2). The active mode changes only here, once per frame on the game thread.
+- __scTaskComplete (0x80050A08) @0x80050A58 `beq $at, $zero` with `$at = sltiu(sc->frameCount (sc+0x300), 2)`: for the last
+  gfx task (flags & 0x20) $at != 0 keeps it in sc->unkTask (sc+0x2FC) until a later retrace (the game's 30 fps cap);
+  60 Hz sets $at = 0, so the done message is sent now and frameCount = 0. __scHandleRetrace @0x800506E8 `bne $at, $zero`
+  (same condition, frameCount already incremented, reached only with sc->unkTask != 0) delivers a held task. The message
+  is sent exactly once on every path; with 60 Hz off $at is untouched. Both now go through jfg_sched_last_task /
+  jfg_sched_retrace_deferred (JFG_TRACE_SCHED=1 logs hold/sent; [Trace] hold=0 sent=1 with 60 Hz).
+- Mode switch consistency: ultramodern runs one game thread at a time; the active mode changes at viFrameSync on the game
+  thread, so the scheduler thread sees one value per frame. [Trace] switching 30->60->30 and 60->30->60 during gameplay
+  (test-only JFG_60HZ_SWITCH="ms:0|1,..."): the update rate follows at once (30.0 <-> 60.0/s, delta 2 <-> 1), game VI time
+  60/s throughout, no hang, process alive, saves unchanged.
+
+### 2. Root cause of "60 Hz gives no more updates" and of the slow 30 Hz mode: runtime SI message spin  [Trace + Code]
+- Before: both modes ran 20 updates/s (delta 3) or 10/s (delta 6). Loop split (JFG_TRACE_LOOP, new W = time in rcpWaitDP):
+  game logic + DL build about 1.4 ms, the rest waiting in rcpWaitDP: W = 32 ms (2 VI) or 65 ms (4 VI).
+- Runtime trace (JFG_TRACE_GFX, env-gated diagnostics in lib/N64ModernRuntime, lib-patches/N64ModernRuntime.patch):
+  the gfx thread was fast (queue 0.14 ms, send_dl 2.5 ms, present 2 us) and enqueued RDP done about 4 ms after
+  submission, but the scheduler got it 26-30 ms later, right after the next VI message.
+- Cause: JFG's SI queue joyMessageQueue holds 1 message (controller.c:32). ultramodern sends the SI completion as an
+  external message with requeue_if_blocked=true; a second SI request per frame cannot be delivered, so the idle thread
+  requeued it forever (25085 failed deliveries in 11 s to mq 0x800FB090 = joyMessageQueue). moodycamel's queue is not FIFO
+  across producers, so the spinning self-requeued message kept the gfx thread's RDP done waiting until a VI message came.
+- Fix (lib-patches/N64ModernRuntime.patch, ultramodern events.cpp send_si_message): requeue_if_blocked=false, like the VI
+  message and like the hardware (event messages are sent with OS_MESG_NOBLOCK and dropped when the queue is full). joyRead
+  only checks whether a message is present, so dropping the second one does not change the game's input handling.
+- After: 30 Hz mode 30.0 updates/s (delta 2, the game's own cap), 60 Hz mode 60.0 updates/s (delta 1); W = 16 ms (30 Hz)
+  and 3.5 ms (60 Hz). NOTE: this changes the default (30 Hz) mode too: it now runs at the original 30 fps instead of the
+  port's 20/10 fps. Game logic is unchanged; only the runtime message delivery was fixed.
+
+### 3. Delta path per system
+| System / function | Delta source | Unit | 30 Hz | 60 Hz result |
+|---|---|---|---|---|
+| Player walk/run (o16 boyControl, arg2) | delayDat | VI | 235.5 units/s | 235.3-235.5 units/s (-0.1 %) [Trace] |
+| Gravity / jump (o15/o16/o17/o50-o53: v -= (1-k)*g*d, then move v*d) | delayDat | VI | apex 55.2-63.2, airtime 499-534 ms | apex 67.15, airtime 567 ms: +6..+22 % / +33..+68 ms [Trace]. Semi-implicit Euler, apex = v0^2/2g - v0*d/2 [Code+Trace]; v0 also varies with update phase / hold (7.5 vs 8.0 in 30 Hz runs) [Trace]. NOT fixed |
+| Animation (walk cycle phase, player obj +0x28, previous value +0xAC) | delta | VI | period 567 ms | period 567 ms [Trace] |
+| Camera follow/rotation smoothing (charControl.c:576, 599, 1599, 1815, 2122, 2195, 2410) | 1 - 0.9^delta | VI | exponential, delta-aware [Code] | not measured separately |
+| Game timer Time (0x800FD748) and 41 of 44 monotonic static counters | delta | VI | 60.0 VI/s | 60.0 VI/s, ratio 1.00 [Trace] |
+| Per-update counters | none | update | bootCheckStack pair (0x800F706C / 0x800F906C), audiomgr list D_800F1B78+0xC | x2 / x1.4, no gameplay effect [Trace + Code] |
+| Texture scroll trackUpdateTextureScroll (track.c:812) | none (main.c:688) | per call | 30 steps/s | was 60/s; FIXED to 30.06/s [Trace] |
+| Audio amAudioTick (fades, delayed sounds) | low byte of delayDat (0x800A3377) | VI | delta-aware [Code] | not listened to |
+| Cutscene sequence 0x16D -> 0x5D -> 0x5C (animseq) | delta | VI | 0x5C at 49.62-49.68 s | 49.52-49.54 s (-0.25 %) [Trace] |
+| Controller (joyRead pressed/released edges) | per update | update | sampled every 33.3 ms | every 16.7 ms [Trace]; repeat logic not checked |
+| Enemies, projectiles, particles | delta passed to the object update [Code] | VI | not measured (no enemies in the start area) | open |
+
+### 4. Fixes in this step
+- Runtime SI delivery (section 2).
+- trackUpdateTextureScroll: hook at the entry (0x80013970, toml + generated): with 60 Hz active it runs only once two
+  VIs (delayDat) have accumulated, at most once per update; 30 Hz unchanged. JFG_TRACE_SCROLL=1 logs every call.
+- Generator: all hooks (scheduler routing, __scTaskComplete entry trace, rcpWaitDP / mainUpdateZBCheck timing, texture
+  scroll) are in decomp/recomp/jfg.us.toml; the regular pipeline (WSL) reproduces the local RecompiledFuncs (0 of 60
+  files differ). Generated files are not committed.
+- Test tools: tools/test_60hz_ab.ps1 (PID-bound A/B, saves checked), tools/analyze_60hz.py (per real second),
+  tools/loop_stats.py, tools/gfx_stats.py, tools/frame_timeline.py (loop / runtime timeline).
+
+### 5. Input latency (CPU / gameplay side, JFG_TRACE_LATENCY + traces; photon latency NOT measured)  [Trace]
+| Measure | 30 Hz | 60 Hz |
+|---|---|---|
+| input sample interval | 33.3 ms | 16.7 ms |
+| walk press -> first moved update | 49-56 ms | 35-38 ms |
+| jump press -> take-off update (includes the wind-up) | 183-189 ms | 168-171 ms |
+| DL -> next present (RT64) | 2-8 ms | 2-8 ms |
+The gameplay reaction is about 15-20 ms shorter with 60 Hz. Visible latency on the screen was not measured.
+
+### 6. Known problems / open
+- Jump / gravity: higher and longer jumps with 60 Hz (discretisation of the semi-implicit integration in the character
+  overlays; also update-phase dependent within 30 Hz). Fix design: in 60 Hz mode integrate the vertical position like
+  the 30 Hz scheme, y += (v - (1-k)*g*(2-d)/2)*d while gravity acts (exact at shared times for constant g), at the
+  gravity sites in o15/o16/o17/o50-o53; needs overlay hooks and per-site register analysis. Not done.
+- Not measured: enemies / AI, projectiles, particles, camera response time, controller repeat, audio by ear, long runs.
+- The fresh default game (fast start) uses the control mode with jump on C-Up (a scripted A press does not jump); the
+  save-slot route uses A. Not a 60 Hz issue.
+- Status: "60 Hz Gameplay" stays Experimental and default OFF.
+
+### 7. Final regression (final exe, all RUN_VALID=1, max_instances_seen=1, saves created/deleted/changed 0)  [Trace]
+| Run set | Result |
+|---|---|
+| A/B 30 Hz x5 | 30.0 updates/s, delta 2 only, game 60.0 VI/s, walk 235.40-235.64/s, jumps 63.2/533 ms (4 runs) and 55.2/500 ms (1 run), scroll 30.12/s, walk reaction 35-56 ms |
+| A/B 60 Hz x5 | 60.0 updates/s, delta 1 only, game 60.0 VI/s, walk 235.34-235.60/s, jumps 67.15/566-568 ms, scroll 30.06/s, walk reaction 34-42 ms |
+| Mode switch 30->60->30 and 60->30->60 during gameplay | rate follows at once, no hang (section 1) |
+| Normal start (no flag) x2 | PASS, title 0x15D |
+| Fast `--jfg-test-start goldwood` x2 | PASS, 0x5C at 536/540 ms script time |
+| goldwood-full x2 per mode (cutscene timing) | PASS (section 3) |
+HUD and camera checked on the 60 Hz screenshot runlogs/shot_1015_225523189_3.png (HUD complete, camera behind Juno).
+Relative deviations 60 vs 30 Hz: walk -0.04 %, game time 0 %, walk-cycle period 0 %, texture scroll -0.2 % (after
+fix; +100 % before), cutscene sequence -0.25 %, jump apex +6.2 % (vs 63.2) / +21.6 % (vs 55.2), airtime +6.4 % / +13.4 %.

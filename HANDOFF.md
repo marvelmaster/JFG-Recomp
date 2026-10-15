@@ -51,7 +51,7 @@ Rules
   Bei lib/-Änderungen lib-patches neu erzeugen. Die genehmigte Instrumentierung in N64ModernRuntime/RT64 erst nach
   diesem Task fortsetzen. Nach dem Push auf den Planner warten.
 
-## Backlog (PAUSIERT, nicht erledigt): Experimental 60 Hz gameplay
+## Backlog (in Arbeit seit 2026-10-15 late night, siehe Last result): Experimental 60 Hz gameplay
 Der vollständige Text dieses Tasks steht unverändert unten. Stand und Messungen: RECOMP.md Einträge 2026-10-15
 (afternoon, late afternoon). Commits: 9444447, ed1f20d.
 
@@ -731,7 +731,33 @@ Der vollständige Text dieses Tasks steht unverändert unten. Stand und Messunge
 
 Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über HANDOFF.md und RECOMP.md im GitHub-Repo zurückmelden.
 
-## Last result (fast start, 2026-10-15 night): direct 0x5C validated and made the default `--jfg-test-start goldwood`
+## Last result (60 Hz gameplay, 2026-10-15 late night, WIP): runtime fix -> real 60 updates/s; jump still off
+
+- **Commit(s):** 75b11c4 (WIP) and the commit that contains this line (`git log -2`), on jfg/main.
+- **Build:** `build_jfg.bat build` exit 0. **Generator:** regular WSL pipeline with the repo toml reproduces all 60
+  RecompiledFuncs files (0 differ), incl. the new hooks. Generated files not committed.
+- **Found and fixed:**
+  - Runtime (lib-patches/N64ModernRuntime.patch): ultramodern requeued the SI completion forever when JFG's 1-slot
+    joyMessageQueue was full; the idle thread spun and delayed RDP done by ~2 VIs, so BOTH modes ran 20 (or 10)
+    updates/s. Now SI is dropped when the queue is full (like VI / hardware). Result: 30 Hz mode 30.0/s (delta 2),
+    60 Hz mode 60.0/s (delta 1). This also makes the default mode faster than before (original 30 fps).
+  - Texture scroll (trackUpdateTextureScroll, per call, no delta): runs at the 30 Hz rate in 60 Hz mode (hook).
+- **Verified time-correct with 60 Hz [Trace]:** walking (-0.04 %), walk-cycle animation period (567 ms both), game timer
+  and 41 of 44 static counters, cutscene sequence (-0.25 %), runtime mode switches 30<->60, scheduler hooks (exactly one
+  done message per task, original path untouched when off), adaptive VI state restored exactly on disable.
+- **Not fixed:** jump/gravity: apex +6 % (vs 63.2) up to +22 % (vs 55.2, 30 Hz is update-phase dependent), airtime
+  +33..+68 ms. Cause: semi-implicit Euler in the character overlays (o15/o16/o17/o50-o53), apex = v0^2/2g - v0*d/2.
+  Fix design in RECOMP.md ("60 Hz gameplay audit", section 6).
+- **Input latency (gameplay side):** sample interval 33.3 -> 16.7 ms; walk press -> moved update 35-56 -> 34-42 ms;
+  jump press -> take-off 183-189 -> 168-171 ms. Photon latency not measured.
+- **Tests:** A/B 5x30 Hz + 5x60 Hz valid; 2 normal starts, 2 fast starts, 2+2 goldwood-full (cutscene timing), 2 switch
+  runs; all RUN_VALID=1, saves unchanged. JFG_NO_AUDIO=1 because the WASAPI box is back on this PC (audio not verified).
+- **Not measured:** enemies/AI, projectiles, particles, camera response, controller repeat, audio by ear, long runs.
+- **Decision:** "60 Hz Gameplay" stays **Experimental, default OFF** (jump physics wrong by more than 2 %).
+- **Next step:** fix the vertical integration in the character overlays for 60 Hz (or limit the correction to the
+  player overlays first), then measure enemies/particles in a level area with enemies.
+
+## Previous Last result (fast start, 2026-10-15 night): direct 0x5C validated and made the default `--jfg-test-start goldwood`
 
 - **Commit(s):** the commit that contains this line (`git log -1`), on jfg/main. Earlier: 8035b83, 0611445, 946c14b,
   7e5aa2a, 50d71b0.
@@ -964,6 +990,7 @@ _Partial. "Done when" is NOT met. Details in `decomp/docs/RECOMP.md` (entry 2026
 _(either side; delete when answered)_
 
 ## History
+- 2026-10-15 23:00 60 Hz: runtime SI requeue spin fixed (30/60 updates/s real), texture scroll fixed, A/B tools; jump still +6..22 % (Claude).
 - 2026-10-15 21:10 Fast start: direct 0x5C validated by state comparison, default `--jfg-test-start goldwood` (10/10 PASS, 0x5C in about 0.6 s game time), generator reproducible (Claude).
 - 2026-10-15 20:35 Norton-off sprint: clean single-process baseline, 0x16D resolved, menu-free `--jfg-test-start goldwood` (10/10 PASS) and `goldwood-landing` (5/5 PASS) (Claude).
 - 2026-10-15 13:00 Repo created; state: playable to Goldwood, mouse aim, optional mouse camera; 60 Hz gameplay checkbox in progress (Codex, 12:12).

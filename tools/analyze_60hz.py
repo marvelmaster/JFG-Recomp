@@ -6,6 +6,7 @@ compared per REAL second, not per update. Prints one JSON object with:
   walk_speed: horizontal distance per real second while UP is held (window --walk a,b in ms, default 2000,4000)
   jump_N: apex height above the take-off height, time to apex and airtime for each scripted jump (window -0.3..+1.5 s)
   scroll_calls_per_s: trackUpdateTextureScroll calls per real second (JFG_TRACE_SCROLL lines, if present)
+  walk_response_ms / jump_N.response_ms: scripted press -> first update whose player state shows the effect
 Usage: python tools/analyze_60hz.py <trace> [--walk 4500,6500] [--jumps 1000,2600]
 """
 import collections
@@ -84,6 +85,19 @@ def main():
             "apex_after_ms": (apex["ms"] - up["ms"]) if up else None,
             "airtime_ms": (down["ms"] - up["ms"]) if (up and down) else None,
         }
+    # Reaction: first update at or after the scripted press whose player state shows the effect
+    # (walk: horizontal move > 0.5 units from the position at the press; jump: y rises by > 0.5).
+    if "--walk" in sys.argv:
+        press = wa - 500 if "--walkpress" not in sys.argv else int(sys.argv[sys.argv.index("--walkpress") + 1])
+        seg = [r for r in rows if r["ms"] >= press and "xyz" in r]
+        if seg:
+            p0 = seg[0]["xyz"]
+            mv = next((r for r in seg if math.hypot(r["xyz"][0] - p0[0], r["xyz"][2] - p0[2]) > 0.5), None)
+            out["walk_response_ms"] = (mv["ms"] - press) if mv else None
+    for n, t in enumerate(jumps, 1):
+        j = out.get("jump_%d" % n)
+        if j and j.get("takeoff_ms"):
+            j["response_ms"] = j["takeoff_ms"] - t
     if scroll:
         sw = [s for s in scroll if 1500 <= s[0] < 10000]
         if sw:

@@ -763,6 +763,22 @@ extern "C" void jfg_gameplay_tick(uint8_t* rdram, recomp_context* ctx) {
     // Explicit 0/1 override for reproducible A/B runs, without changing the saved preference.
     static const char* forced = std::getenv("JFG_60HZ_GAMEPLAY");
     if (forced) enabled = std::strcmp(forced, "1") == 0;
+    // Test-only switch plan JFG_60HZ_SWITCH="ms:0|1,..." (script time): the request changes at those times, like a
+    // toggle of the option during gameplay. The active mode still changes only in jfg_frame_sync_limit.
+    static const char* plan = std::getenv("JFG_60HZ_SWITCH");
+    if (plan && jfg_script_begin_ms) {
+        const uint64_t ms = SDL_GetTicks64() - jfg_script_begin_ms;
+        for (const char* p = plan; *p;) {
+            char* end = nullptr;
+            const uint64_t at = std::strtoull(p, &end, 10);
+            if (!end || *end != ':') break;
+            const bool v = end[1] == '1';
+            if (ms >= at) enabled = v;
+            p = std::strchr(end, ',');
+            if (!p) break;
+            ++p;
+        }
+    }
     jfg_60hz_requested.store(enabled, std::memory_order_relaxed);
     static const bool trace_loop = std::getenv("JFG_TRACE_LOOP") != nullptr;
     if (trace_loop) {
