@@ -1,6 +1,6 @@
 # Static recompilation (Windows build track)
 
-## CURRENT STATUS (2026-10-15 12:19) - read this first
+## CURRENT STATUS (2026-10-15 afternoon) - read this first
 Everything below this section is the chronological log (oldest first); the newest entries are at the end.
 
 **Works (verified with screenshots, scripted input):** native Windows exe boots, intro logos, title, menus,
@@ -21,7 +21,20 @@ Not yet tried by a human with real mouse/keyboard; audio never listened to.
    3-6 ms. Real reduction only by running the game logic faster (planned: optional 60 Hz logic, see below).
 4. Nothing is committed to git; changes span the main project and the RT64 / N64ModernRuntime / N64Recomp submodules.
 
-**In progress:** experimental 60 Hz gameplay checkbox (default off), builds successfully. Revised completion hooks + VI pacing reach delta=1 / ~60 updates/s in initial runtime; Goldwood A/B validation ongoing. RT64 decoded Juno matrices match CPU for 252 captured loads; remaining model issue is downstream. See 12:17 and later entries.
+**In progress: 60 Hz validation is NOT complete (experimental checkbox, default OFF, stays experimental).**
+- Measured on Goldwood (scripted 128 s, tools/test_60hz_gameplay.ps1, afternoon entry): 30 Hz 2995 updates (23.4/s,
+  delta 2-3); 60 Hz 3055 (committed HEAD) and 3117 (current WIP) updates (about 24/s, delta mostly 2-3). One further
+  60 Hz run gave 1751 (13.7/s, delta 4-6) that was not reproduced; cause unknown.
+- So **60 updates/s was not reached stably** on these runs and the mode gives no update-rate gain over 30 Hz here.
+  The earlier "delta=1 / ~16.7 ms" claim (12:19) was not reproduced. The game timer runs at the same speed in both
+  modes (about 7640 VI ticks per 128 s).
+- This is NOT yet a hardware limit: the render/present/scheduler split per frame has not been profiled. Next step is
+  per-iteration profiling (OFF vs ON, at least 3 runs each) to separate game CPU time from wait and present time.
+- Fixed in WIP: adaptive VI minimum now restored exactly on disable (was a fixed 2); mode changes only at viFrameSync.
+  OFF<->ON toggling, scene and pause changes are not yet tested.
+- Not validated: XYZ speed, jump, animation, timers, camera, particles, cutscenes, audio (not listened to), enemy AI,
+  input latency, long-run stability.
+RT64 decoded Juno matrices match CPU for 252 captured loads; remaining model issue is downstream. See 12:17 and later entries.
 
 **Where things are**
 - Native project: F:\SelfmadeTools\JFG_Recomp\JFGRecomp - `build_jfg.bat [configure|build]`, exe build-cmake\JFGRecompiled.exe,
@@ -653,3 +666,39 @@ Findings:
   Thus fixed-point decoding and buffer selection are correct for this captured idle-pose sample.
   Still open: downstream vertex/triangle processing, combined camera transform, GPU rendering;
   this is not a visual model fix or proof for all poses.
+
+## 2026-10-15 (afternoon): VI-minimum restore and mode latch; 60 Hz update rate NOT reached (Codex)
+- Audit against generated code (RecompiledFuncs/funcs_16.c, funcs_17.c, not only the decomp C):
+  - __scHandleRetrace 0x800506E8: `sltiu $at` on the frame count, then `bne $at` (funcs_16.c:7040). The hook writes
+    ctx->r1 (= $at) right before that branch, so the register is correct.
+  - __scTaskComplete 0x80050A58: `sltiu $at` on the frame count, then `beq $at` (funcs_16.c:7688). Same register,
+    same effect: the forced value means "count >= 2", i.e. the count gate is bypassed while enabled.
+  - viFrameSync hook 0x80055104: reads the adaptive minimum through s1 = ctx->r17 = 0x800FECAC
+    (D_800FECAC_B189C). The hook writes that same byte (funcs_17.c:8686).
+- Adaptive VI state (gameVi.c viFrameSync): minimum 1/2/3 (3 once stable), short-frame counter (B189B 0x800FECAB),
+  "no stable frame yet" flag (B189D 0x800FECAD). The previous disable path wrote a fixed 2, which is not an exact
+  restore.
+- Changed (src/main/main.cpp, jfg_gameplay_tick / jfg_frame_sync_limit): joyRead now only writes the requested
+  mode (jfg_60hz_requested). The active mode used by the scheduler hooks changes only in jfg_frame_sync_limit.
+  Enabling saves the three bytes, disabling restores them. OFF path: no writes (unchanged from before).
+- NOT verified: OFF -> ON and ON -> OFF toggling at runtime, pause/menu/scene changes, and exact restore values.
+- Runs: tools/test_60hz_gameplay.ps1, Goldwood route, 128 s script time, same input. Traces in runlogs/
+  (gitignored, local only). Game timer = VI ticks (sum of delta) at the end of the run:
+
+  | Run | Updates | Updates/s | Delta distribution | Game timer |
+  |---|---|---|---|---|
+  | 30 Hz (new build) | 2995 | 23.4 | d2 1445, d3 1504 | 7644 |
+  | 60 Hz committed (HEAD) | 3055 | 23.9 | d2 1698, d3 1248 | 7625 |
+  | 60 Hz new build | 3117 | 24.4 | d2 1854, d3 1163 | 7649 |
+  | 60 Hz new build, first run | 1751 | 13.7 | d4 1390, d6 343 | 7640 |
+
+  The 1751 run was not reproduced (repeat gave 3117) and its cause is unknown. Treat it as run-to-run variance.
+- Conclusions:
+  - The 60 Hz target (about 60 updates/s, delta=1) is NOT reached on this machine. 60 Hz and 30 Hz run at the same
+    rate (about 24 updates/s, delta 2-3), so the bottleneck is render/present, not the scheduler. The "delta=1,
+    about 16.7 ms" result of 12:19 was not reproduced in these runs.
+  - The in-game timer advances about 7640 VI ticks in 128 s in both modes, so no speed drift is visible in this
+    one comparison. XYZ-based speed, jump, animation, camera, and cutscene tests have NOT been run.
+  - Option stays Experimental, default OFF.
+- Open: profile CPU/GPU frame time at 60 Hz; verify OFF <-> ON toggles; remaining audit items (animation, physics,
+  camera, particles, cutscenes, audio, enemy AI); input-latency test (TEST 10); long-run tests (TEST 11).

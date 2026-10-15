@@ -677,7 +677,10 @@ extern "C" void jfg_mouse_aim(uint8_t* rdram, recomp_context* ctx) {
 // player and adds the same angle to az and to the view yaw (*controlcam). The game's own smoothing, collision
 // (func_8002CBD0) and height logic still run afterwards. Movement is already camera relative (stick angle minus
 // *controlcam in the player overlays), so WASD then moves relative to the view and the character turns to it.
-// Sample the persisted option on the game thread; scheduler hooks only read this atomic.
+// Sample the persisted option on the game thread (joyRead) into jfg_60hz_requested. The mode the scheduler hooks
+// use (jfg_60hz_active) changes only in jfg_frame_sync_limit (viFrameSync), so a toggle takes effect at one fixed
+// point per VI frame instead of at the input poll. Retrace handlers still run asynchronously to that point.
+static std::atomic<bool> jfg_60hz_requested{false};
 static std::atomic<bool> jfg_60hz_active{false};
 extern "C" int jfg_60hz_enabled() {
     return jfg_60hz_active.load(std::memory_order_relaxed);
@@ -691,7 +694,7 @@ extern "C" void jfg_gameplay_tick(uint8_t* rdram, recomp_context* ctx) {
     // Explicit 0/1 override for reproducible A/B runs, without changing the saved preference.
     static const char* forced = std::getenv("JFG_60HZ_GAMEPLAY");
     if (forced) enabled = std::strcmp(forced, "1") == 0;
-    jfg_60hz_active.store(enabled, std::memory_order_relaxed);
+    jfg_60hz_requested.store(enabled, std::memory_order_relaxed);
     static const bool trace = std::getenv("JFG_TRACE_GAMEPLAY") != nullptr;
     if (!trace) return;
     static uint64_t frame_number = 0;
@@ -713,14 +716,31 @@ extern "C" void jfg_gameplay_tick(uint8_t* rdram, recomp_context* ctx) {
     }
 }
 
+// Adaptive VI state of gameVi.c (viFrameRateReset / viFrameSync), verified against RecompiledFuncs:
+// D_800FECAC_B189C = minimum frames per update (1/2/3), D_800FECAB_B189B = short-frame counter,
+// D_800FECAD_B189D = "no stable frame yet" flag. viFrameSync reads the minimum at 0x80055104 (s1 = 0x800FECAC).
+static constexpr int32_t kViMinFrames = (int32_t)0x800FECAC;
+static constexpr int32_t kViCounter = (int32_t)0x800FECAB;
+static constexpr int32_t kViStable = (int32_t)0x800FECAD;
+static uint8_t jfg_vi_saved[3] = { 2, 0, 1 }; // 30 Hz values captured on enable; reset values until then
+
 extern "C" void jfg_frame_sync_limit(uint8_t* rdram, recomp_context* ctx) {
-    static bool was_enabled = false;
-    const bool enabled = jfg_60hz_enabled();
-    // s1 points to the adaptive VI minimum. Leave the measured delta and final
-    // swap/retrace wait intact. Restore the original minimum on disabling.
-    if (enabled) MEM_B(0, ctx->r17) = 1;
-    else if (was_enabled) MEM_B(0, ctx->r17) = 2;
-    was_enabled = enabled;
+    const bool want = jfg_60hz_requested.load(std::memory_order_relaxed);
+    const bool active = jfg_60hz_active.load(std::memory_order_relaxed);
+    // Save the 30 Hz adaptive state on enable and restore it exactly on disable (not a fixed value).
+    if (want && !active) {
+        jfg_vi_saved[0] = MEM_BU(0, (gpr)kViMinFrames);
+        jfg_vi_saved[1] = MEM_BU(0, (gpr)kViCounter);
+        jfg_vi_saved[2] = MEM_BU(0, (gpr)kViStable);
+        jfg_60hz_active.store(true, std::memory_order_relaxed);
+    } else if (!want && active) {
+        MEM_B(0, (gpr)kViMinFrames) = (int8_t)jfg_vi_saved[0];
+        MEM_B(0, (gpr)kViCounter) = (int8_t)jfg_vi_saved[1];
+        MEM_B(0, (gpr)kViStable) = (int8_t)jfg_vi_saved[2];
+        jfg_60hz_active.store(false, std::memory_order_relaxed);
+    }
+    // Leave the measured delta and the final swap/retrace wait untouched; only the minimum is forced to 1.
+    if (want) MEM_B(0, (gpr)kViMinFrames) = 1;
 }
 
 static bool jfg_mouse_camera_enabled() {
