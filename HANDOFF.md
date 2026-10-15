@@ -759,13 +759,18 @@ Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über 
   - Fresh-game behaviour: walking to Magnus starts his welcome dialogue, which waits for A (not a hang).
   - First controllable frame (UP held before the load, landing variant): movement 3 updates / 43 ms after the 0x5C levelInit.
   - Game flags are inside the game struct (main.c:1952), so the byte-identical comparison covers them.
+  - Experiment JFG_TESTSTART_EARLY=1 (env, test only): trigger at the second level-0 request (~0.5 s) instead of the
+    title; all library inits (amInit, partInitLib, fontInit, ...) run before it. goldwood-landing + early: 3 runs OK
+    (1 manual, 2 test-script PASS), 0x5C active at 0.54-0.77 s script time, saves unchanged. goldwood regression after
+    this change: PASS (0x5C at 50.3 s). Not yet the default.
 - **P5 harness:** test_menu_free_start.ps1 checks active level (levelInit), created/deleted/changed saves by name+hash,
   RUN_VALID/max_instances, own PID log/trace/screenshot, -Normal regression. Exit codes 0/1/2.
 - **Not done / open:** intro skip and cutscene skip flags (still refused); globals outside the game struct for
   goldwood-landing (animseq, object, camera, audio state); 0x7A script offset/condition; regeneration of
   RecompiledFuncs with the three new hooks (inserted by hand, toml has them); 60 Hz.
-- **Next step:** compare global flags/animseq state between goldwood and goldwood-landing; then decide whether
-  goldwood-landing can be the default for `--jfg-test-start goldwood`. Then intro skip with an earlier trigger.
+- **Next step:** compare state outside the game struct (animseq, objects, camera, audio) between goldwood and
+  goldwood-landing; then decide whether goldwood-landing + early trigger can become the default `--jfg-test-start
+  goldwood` (about 1 s to playable Goldwood instead of about 50 s). Then regenerate RecompiledFuncs from the toml.
 
 ## Previous Last result (process investigation, 2026-10-15, WIP): double start is real, harness now refuses and binds PID
 

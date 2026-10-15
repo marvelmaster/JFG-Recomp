@@ -791,8 +791,17 @@ extern "C" void jfg_change_level(uint8_t* rdram, recomp_context* ctx) {
     // The level script then continues as in a normal game (0x16D -> 0x5D -> 0x5C via animseq command 0x7A).
     // No save is read or written (mainSaveGame is not called). Arguments 5 and 6 (stack) are 1 and 0 in both calls.
     static bool test_started = false;
-    if (jfg_test_start_char >= 0 && !test_started && level == 0x15D) {
+    // Experiment (JFG_TESTSTART_EARLY=1, test only): trigger at the main loop's level-0 request (mode 2, about 0.5 s after
+    // boot) instead of the title request, to skip the logo pages. Its stack arguments are not known, so they are set
+    // to the 1, 0 that the title and frontCharSelect calls pass.
+    static const bool early = std::getenv("JFG_TESTSTART_EARLY") != nullptr;
+    const bool early_hit = early && level == 0 && (int32_t)ctx->r7 == 2;
+    if (jfg_test_start_char >= 0 && !test_started && (level == 0x15D || early_hit)) {
         test_started = true;
+        if (early_hit) {
+            MEM_W(0x10, ctx->r29) = 1;
+            MEM_W(0x14, ctx->r29) = 0;
+        }
         const recomp_context saved = *ctx;
         mainGetGame(rdram, ctx);
         const gpr game = ctx->r2;

@@ -1106,3 +1106,15 @@ Results (all RUN_VALID=1, max_instances_seen=1, saves_created=0 deleted=0 change
 - Game flags (mainGetGameFlag) live in the game struct (game->pad[0x30 + flag/8], main.c:1952), so they are covered by
   the byte-identical game struct comparison of section 7. mainSaveGlobalFlags only sets a save request bit
   (load_save_flags |= 0x02000000, main.c:2219); no save file changed in any run.
+
+### 10. Experiment: early trigger (JFG_TESTSTART_EARLY=1, test only, default off)  [Code + Trace]
+- Trigger at the main loop's level-0 request with mode 2 (the second mainChangeLevel call, about 0.5 s after the first
+  pad poll) instead of the title request 0x15D. Its stack arguments are not known, so the hook sets them to 1, 0.
+- Why it is plausible: in the route trace all library inits reached through the trampoline run BEFORE the first level
+  request: modules 36+0, 25+0x308 amInit, 34+0, 33+0, 45+0/0xC8/0x11C, 26+0x2F8 partInitLib, 35+0 fontInit,
+  47+0x206C animseqInitCaptions. Between the first and the second level-0 request only the menu frame code of module 12
+  runs. So the early trigger skips the logo/title pages only. [Vermutung: no other boot state is set by the logo pages.]
+- Run 20:34:24 (PID 30860, RUN_VALID=1, goldwood-landing + early): 0x5C levelInit at script ms 543, objSetupPlayers at
+  556; with UP held from 5 s the player walked to Magnus (z 199 -> 1188) and his dialogue text rendered correctly.
+  Repeats (tools/test_menu_free_start.ps1 -Start goldwood-landing -EnvExtra JFG_TESTSTART_EARLY=1): 2/2 PASS, 0x5C at
+  770/766 ms, saves unchanged, RUN_VALID=1. goldwood regression on the same build: PASS (0x5C at 50324 ms).
