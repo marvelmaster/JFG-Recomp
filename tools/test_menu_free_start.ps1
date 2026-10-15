@@ -12,7 +12,10 @@
 # With -Normal the same run is made WITHOUT the flag and must NOT show a test start (regression check).
 # Exit code: 0 = all runs PASS, 1 = a run failed, 2 = harness error.
 # Usage: powershell -ExecutionPolicy Bypass -File tools\test_menu_free_start.ps1 [-Runs 3] [-Seconds 100] [-Normal]
-param([int]$Runs = 1, [int]$Seconds = 100, [switch]$Normal)
+#        [-Start goldwood|goldwood-landing] [-EnvExtra "JFG_DUMP_GAME=1"]
+# goldwood-landing loads 0x5C at about 16 s, but the scripted UP starts at 30 s, so its first_move_ms is bounded by
+# the input script, not by the game.
+param([int]$Runs = 1, [int]$Seconds = 100, [switch]$Normal, [string]$Start = "goldwood", [string]$EnvExtra = "")
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $outDir = Join-Path $root "runlogs"
@@ -27,12 +30,14 @@ function Get-SaveState {
 }
 $overall = 0
 for ($n = 1; $n -le $Runs; $n++) {
-    $tag = if ($Normal) { "normal_start_$n" } else { "menu_free_start_$n" }
+    $tag = if ($Normal) { "normal_start_$n" } else { "menu_free_${Start}_$n" }
     $before = Get-SaveState
-    $extra = if ($Normal) { "" } else { "--jfg-test-start goldwood" }
-    $capture = @(powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "run_capture.ps1") -Seconds $Seconds `
-        -Shots "$($Seconds - 5)" -NoConsole -ScriptTime -ExtraArgs $extra `
-        -Env "JFG_HEARTBEAT=1;JFG_TRACE_LEVEL=1;JFG_TRACE_GAMEPLAY=1;JFG_INPUT_SCRIPT=$walk")
+    # powershell -File drops an empty argument, so -ExtraArgs is only passed when there is something to pass.
+    $captureArgs = @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "run_capture.ps1"), "-Seconds", $Seconds,
+        "-Shots", "$($Seconds - 5)", "-NoConsole", "-ScriptTime",
+        "-Env", "JFG_HEARTBEAT=1;JFG_TRACE_LEVEL=1;JFG_TRACE_GAMEPLAY=1;$EnvExtra;JFG_INPUT_SCRIPT=$walk")
+    if (-not $Normal) { $captureArgs += @("-ExtraArgs", "--jfg-test-start $Start") }
+    $capture = @(& powershell @captureArgs)
     $captureExit = $LASTEXITCODE
     $after = Get-SaveState
     $err = @()
@@ -60,6 +65,8 @@ for ($n = 1; $n -le $Runs; $n++) {
         $inits += [pscustomobject]@{ ms = [int64]$Matches[1]; level = [Convert]::ToInt32($Matches[2], 16); char = [int]$Matches[3] } } }
     $seq = ($inits | ForEach-Object { "0x{0:X}" -f $_.level }) -join ","
     $landing = $inits | Where-Object { $_.level -eq 0x5C } | Select-Object -First 1
+    if ($Normal -and -not ($inits | Where-Object { $_.level -eq 0x15D })) { $err += "normal start did not reach the title level 0x15D (sequence $seq)" }
+    if ($Normal -and ($inits | Where-Object { $_.level -eq 0x16D })) { $err += "normal start loaded 0x16D without menu input" }
     if (-not $Normal) {
         if ($inits | Where-Object { $_.level -eq 0x15D }) { $err += "title level 0x15D was loaded" }
         if (-not $landing) { $err += "level 0x5C never became active (sequence $seq)" }

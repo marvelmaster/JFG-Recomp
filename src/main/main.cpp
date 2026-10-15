@@ -746,6 +746,7 @@ extern "C" void jfg_gameplay_tick(uint8_t* rdram, recomp_context* ctx) {
 static int jfg_debug_level = -1;
 static int jfg_debug_char = -1;
 static int jfg_test_start_char = -1; // --jfg-test-start goldwood: character for the menu-free start
+static int jfg_test_start_level = -1; // goldwood-landing: request this level instead of the character's start level
 extern "C" void mainGetGame(uint8_t*, recomp_context*);        // generated (RecompiledFuncs), 0x80047C0C
 extern "C" void mainSetDefaultGame(uint8_t*, recomp_context*); // 0x800476F0
 extern "C" void mainSetMode(uint8_t*, recomp_context*);        // 0x80047580
@@ -805,7 +806,10 @@ extern "C" void jfg_change_level(uint8_t* rdram, recomp_context* ctx) {
         ctx->r4 = 0;
         mainSetMode(rdram, ctx);
         const gpr record = game + jfg_test_start_char * 0x76 + 0x15C;
-        const uint32_t level_region = (uint16_t)MEM_HU(0x74, record);
+        uint32_t level_region = (uint16_t)MEM_HU(0x74, record);
+        // goldwood-landing: skip the two cutscene levels 0x16D and 0x5D and request 0x5C with the arguments that
+        // command 0x7A of 0x5D uses (region 0, mode 0x10, anim group 0; mainChangeLevel itself sets the group to 0).
+        if (jfg_test_start_level >= 0) level_region = (uint32_t)jfg_test_start_level << 5;
         *ctx = saved;
         ctx->r4 = (gpr)(int32_t)(level_region >> 5);
         ctx->r5 = (gpr)jfg_test_start_char;
@@ -865,6 +869,24 @@ extern "C" void jfg_trace_level_init(uint8_t* rdram, recomp_context* ctx) {
     jfg_logf("JFG_LEVELINIT ms=%llu level=0x%X a1=%d char=%d animgroup=%d region_req=%d mode_req=%d ra=0x%08X\n",
         (unsigned long long)jfg_trace_ms(), (uint32_t)ctx->r4, (int32_t)ctx->r5, (int32_t)ctx->r6, (int32_t)ctx->r7,
         (int32_t)MEM_H(0, (gpr)(int32_t)0x800A3268), (int32_t)MEM_H(0, (gpr)(int32_t)0x800A3264), (uint32_t)ctx->r31);
+    // JFG_DUMP_GAME=1: the whole game struct (0x538 bytes = the size the save path copies, overlay_42.c:600) at each
+    // level load, to compare the state of different start paths byte by byte.
+    static const bool dump = std::getenv("JFG_DUMP_GAME") != nullptr;
+    if (dump) {
+        const recomp_context saved = *ctx;
+        mainGetGame(rdram, ctx);
+        const gpr game = ctx->r2;
+        *ctx = saved;
+        std::string hex;
+        hex.reserve(0x538 * 2);
+        static const char digits[] = "0123456789ABCDEF";
+        for (int i = 0; i < 0x538; ++i) {
+            const uint8_t b = (uint8_t)MEM_BU(i, game);
+            hex.push_back(digits[b >> 4]);
+            hex.push_back(digits[b & 15]);
+        }
+        jfg_logf("JFG_GAMEDUMP level=0x%X game=0x%08X %s\n", (uint32_t)ctx->r4, (uint32_t)game, hex.c_str());
+    }
 }
 extern "C" void jfg_trace_setup_players(uint8_t* rdram, recomp_context* ctx) {
     static const bool trace = std::getenv("JFG_TRACE_LEVEL") != nullptr;
@@ -1327,8 +1349,12 @@ int main(int argc, char** argv) {
             if (strcmp(name, "goldwood") == 0) {
                 // Char 1 (Juno): the character the verified route selects; its default start level is 0x16D.
                 jfg_test_start_char = 1;
+            } else if (strcmp(name, "goldwood-landing") == 0) {
+                // Same, but directly to 0x5C "Forest Day Landing" (playable level), see jfg_change_level.
+                jfg_test_start_char = 1;
+                jfg_test_start_level = 0x5C;
             } else {
-                fprintf(stderr, "[JFG] Unknown --jfg-test-start '%s'. Supported: goldwood. Nothing started.\n", name);
+                fprintf(stderr, "[JFG] Unknown --jfg-test-start '%s'. Supported: goldwood, goldwood-landing. Nothing started.\n", name);
                 return EXIT_FAILURE;
             }
             continue;
