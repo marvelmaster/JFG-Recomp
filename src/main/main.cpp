@@ -362,9 +362,14 @@ bool reset_audio(uint32_t output_freq) {
 
     audio_device = SDL_OpenAudioDevice(nullptr, false, &spec_desired, nullptr, 0);
     if (audio_device == 0) {
-        std::string audio_error = std::string("No audio device could be found. Please make sure an audio device is available.\nError opening audio device: ") + std::string(SDL_GetError());
-        recompui::message_box(audio_error.c_str());
-        return false;
+        // Test-only escape hatch (default off): JFG_NO_AUDIO=1 continues without audio. Without it the modal box
+        // blocks the game thread, so a busy or broken audio endpoint makes every headless run hang.
+        if (std::getenv("JFG_NO_AUDIO") == nullptr) {
+            std::string audio_error = std::string("No audio device could be found. Please make sure an audio device is available.\nError opening audio device: ") + std::string(SDL_GetError());
+            recompui::message_box(audio_error.c_str());
+            return false;
+        }
+        fprintf(stderr, "[JFG] JFG_NO_AUDIO=1: audio device failed (%s); continuing without audio (test mode).\n", SDL_GetError());
     }
 
     SDL_PauseAudioDevice(audio_device, 0);
@@ -736,11 +741,23 @@ extern "C" void jfg_gameplay_tick(uint8_t* rdram, recomp_context* ctx) {
 // call passes through unchanged. Without the option nothing is changed.
 static int jfg_debug_level = -1;
 static int jfg_debug_char = -1;
+extern "C" int jfg_overlay_at(uint32_t addr, uint32_t* rom_out, uint32_t* base_out); // rom_decompression.cpp
 extern "C" void jfg_change_level(uint8_t* rdram, recomp_context* ctx) {
     static const bool trace = std::getenv("JFG_TRACE_LEVEL") != nullptr;
     const int32_t level = (int32_t)ctx->r4;
-    if (trace) jfg_logf("JFG_LEVEL mainChangeLevel level=0x%X char=%d a2=%d a3=%d\n",
-        level, (int32_t)ctx->r5, (int32_t)ctx->r6, (int32_t)ctx->r7);
+    // ra = return address (RAM). If it lies in an overlay that is loaded right now, log that overlay's ROM address
+    // and RAM base, so the caller can be mapped to a function without guessing from a reused address.
+    if (trace) {
+        uint32_t caller_rom = 0, caller_base = 0;
+        const uint32_t ra = (uint32_t)ctx->r31;
+        if (jfg_overlay_at(ra, &caller_rom, &caller_base)) {
+            jfg_logf("JFG_LEVEL mainChangeLevel level=0x%X char=%d a2=%d a3=%d ra=0x%08X overlay_rom=0x%08X overlay_base=0x%08X off=0x%X\n",
+                level, (int32_t)ctx->r5, (int32_t)ctx->r6, (int32_t)ctx->r7, ra, caller_rom, caller_base, ra - caller_base);
+        } else {
+            jfg_logf("JFG_LEVEL mainChangeLevel level=0x%X char=%d a2=%d a3=%d ra=0x%08X overlay=none\n",
+                level, (int32_t)ctx->r5, (int32_t)ctx->r6, (int32_t)ctx->r7, ra);
+        }
+    }
     // Trigger: the first character-select request (0x16D "Boy Select Sq") after the start. The verified route in
     // run_to_goldwood.ps1 never calls 0x142, so 0x142 alone would not fire. Only the first call is redirected.
     static bool redirected = false;

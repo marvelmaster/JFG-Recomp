@@ -788,3 +788,41 @@ Findings:
   would be a guess. The landing cutscene 0x5C is still played; no cutscene skip exists.
 - Not done: menu-free start, intro/cutscene skip, 10 repeats, 2 normal starts with this final build, invalid-name run,
   30/60-Hz smoke test, time comparison with the old path beyond the one redirect measurement.
+
+## 2026-10-15 (step 1, call graph): mainChangeLevel callers and transitions (Codex)
+Labels: [Code] = read in decomp source or generated code; [Trace] = measured in a run; [Vermutung] = not proven.
+
+Audio blocker (environment, not game code): since 17:02 every launch stopped at a modal box
+"No audio device could be found ... WASAPI can't initialize audio client" (src/main/main.cpp reset_audio). Test-only
+escape hatch added: JFG_NO_AUDIO=1 continues without audio (default off, normal start unchanged). Audio is then not played.
+
+Table (addresses are the entry of mainChangeLevel = 0x8004665C unless noted):
+
+| Transition | Caller (measured) | Condition in code | Game state read/written | Needed before | Evidence |
+|---|---|---|---|---|---|
+| mainChangeLevel itself | many, see below | none | writes D_800A3250 (level), D_800A3AB0 (char), D_800A3264 (mode), D_800A3268 (region), D_800A3294 (fade countdown). Does NOT load the level | later loader in the main loop reads these [Vermutung, loader not yet found] | [Code] main.c:1174-1230 |
+| 0x7F (mode 5) | overlay index 41 = decomp o42 (ROM 0x01F5F0C8, runtime base 0x8027BFA0, off 0x1E8) | overlay_42.c:600-619: after a button press, copies save slot F5E (0x538 bytes) into the game struct, sets cooperativeGame from F5F, then calls mainChangeLevel(0x7F,0,0,5,1,0) | writes game struct (mainGetGame), cooperativeGame; reads SAVE_SLOT(F5E), F5F | valid save slot | [Code] + [Trace] (once, at about 60 s). Function-level mapping of off 0x1E8 NOT verified |
+| 0x142 (new game) | not called on the verified route | overlay_42.c:985-998: mainSetDefaultGame(game), name copied to game+0x51C, mainSaveGame(F5E), mainChangeLevel(0x142,0,0,0,1,0) | writes default game, name, save slot | - | [Code] + [Trace] (never called) |
+| 0x16D (char 1, mode 16) | overlay index 57 (ROM 0x01F782B0, runtime base 0x803432C0, off 0x234); 4 calls with the same caller | not literal in code. Candidate: frontCharSelect (overlay_58.c:150-180) computes level = (game + char*0x76 + 0x15C + 0x74) >> 5 and calls mainChangeLevel(level, char, ..., 0x10, 1, 0) | reads character record in game struct | a valid game struct | [Trace] caller overlay; [Code] candidate in o58. CONFLICT: index 57 maps to decomp o59 (frontCredits by name), not to o58. Unresolved |
+| 0x5D (char 1, mode 16) | ra 0x80077B14 in animseqProcessCommandList (funcs_25.c), reached after jal 0x80054530 | none found yet | unknown | cutscene command list running | [Trace] ra inside animseqProcessCommandList. [Vermutung] the animseq command list triggers the level change; the wrapper 0x80054530 was not analysed |
+| 0x5C (char 1, mode 16) | not yet analysed | - | - | - | [Trace] only (after 0x5D) |
+
+Why return addresses are not enough (checked in generated code):
+- ra = 0x800451BC (main loop, funcs_12.c:1881-1889) and 0x80077B14 (funcs_25.c:48-53) both follow `jal 0x80054530`, not a
+  jal to mainChangeLevel. So the call chain is not a direct jal; a helper or a tail jump sits in between.
+- Overlay addresses are runtime-allocated and reused (rom_decompression.cpp unloads and reloads at the same RAM). The
+  trace now logs the overlay that is loaded at call time (ROM address, base, offset). Runtime offset to generated link
+  address does not match in the cases checked (overlay 41: link base 0x83A00000, no jal at off 0x1E0), so function names
+  for overlay callers are NOT proven.
+
+New, env-gated trace (default off): JFG_TRACE_LEVEL=1 logs every mainChangeLevel call with ra and, if ra is inside a
+loaded overlay, that overlay's ROM address, base and offset (src/game/rom_decompression.cpp jfg_overlay_at).
+
+Minimal chain for a menu-free start: NOT established. Still missing: (1) the loader that acts on D_800A3250 after the
+fade countdown; (2) the state set by the save-slot load path (0x7F) and the character select (0x16D, frontCharSelect
+candidate); (3) what must exist before 0x5D/0x5C; (4) the wrapper 0x80054530. No direct mainChangeLevel call from the
+main thread has been shown to work (NONMATCHING_BUILD.md:158 says it hung).
+
+Next concrete steps: decode the jal word at ra-8 in RDRAM at call time to get the exact call target (no guessing of
+functions); identify 0x80054530 (funcs_17.c) and what calls it; find the loader that reads D_800A3250 (grep the generated
+main loop for D_800A3250 / 0xA3250 reads); verify overlay 57 identity by comparing the ROM bytes with the loaded RAM.

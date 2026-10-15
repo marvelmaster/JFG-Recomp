@@ -729,7 +729,26 @@ Der vollständige Text dieses Tasks steht unverändert unten. Stand und Messunge
 
 Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über HANDOFF.md und RECOMP.md im GitHub-Repo zurückmelden.
 
-## Last result (Phase 2 review of fe4c7c6, 2026-10-15): WIP checkpoint, BLOCKED
+## Last result (step 1 call graph, 2026-10-15, WIP): call graph partly proven, minimal init chain NOT established
+
+- **Done:** call-graph table with [Code] / [Trace] / [Vermutung] labels in RECOMP.md ("step 1, call graph").
+  - 0x142 is never called on the verified route. 0x7F comes from the save-load path (o42, overlay index 41). 0x5D comes
+    from a return address in animseqProcessCommandList (cutscene command list, main code).
+  - mainChangeLevel only writes the requested level, char and mode, and a fade countdown. Loading happens elsewhere.
+- **Open / blockers:**
+  - 0x16D caller: overlay index 57 (decomp o59 by name) conflicts with frontCharSelect (o58) as the candidate. Unresolved.
+  - Return addresses do not map to direct jal sites; a helper 0x80054530 sits in between. Not analysed.
+  - Overlay function names via runtime offset are not proven (link/runtime offset mismatch).
+  - Loader of D_800A3250 after the fade countdown: not found.
+  - Audio endpoint in this environment fails (WASAPI "Das Handle ist ungültig"); normal start blocks in the modal box
+    unless JFG_NO_AUDIO=1. The user should check the default audio device.
+- **Test-harness changes:** JFG_NO_AUDIO (test-only) and JFG_TRACE_LEVEL overlay attribution. Both default off.
+- **Not done:** Step 2 (new-game state), Step 3 (0x5C landing), Step 4 (harness hardening, save create/delete checks,
+  exit-code checks with timeout), Step 5 (menu-free --jfg-test-start). No cutscene bypass implemented.
+- **Next steps (from RECOMP.md):** decode the jal word at ra-8 in RDRAM at call time; analyse 0x80054530 (funcs_17.c);
+  find the reader of D_800A3250 in the main loop; verify overlay 57 identity from ROM bytes.
+
+## Previous Last result (Phase 2 review of fe4c7c6, 2026-10-15): WIP checkpoint, BLOCKED
 
 - **Status:** Menu-free `--jfg-test-start goldwood` NOT implemented. Blocker: the initialisation chain before 0x16D and
   the callers of 0x5D/0x5C are not reconstructed (RECOMP.md entry "phase 2 review"). A direct start from mainThread

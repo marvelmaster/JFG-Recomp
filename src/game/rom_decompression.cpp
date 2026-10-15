@@ -204,8 +204,23 @@ extern "C" void jfg_native_scheduler_tick(uint8_t* rdram, recomp_context*) {
 
 namespace {
     std::mutex overlay_mutex;
-    std::unordered_map<uint32_t, uint32_t> loaded_overlays; // ram address -> size
+    struct LoadedOverlay { uint32_t rom; uint32_t size; };
+    std::unordered_map<uint32_t, LoadedOverlay> loaded_overlays; // ram address -> rom address and size
     constexpr bool log_overlays = true;
+}
+
+// Debug/trace helper: which overlay (ROM address, RAM base) is loaded at this RAM address right now.
+// Overlay RAM is reused after unloading, so a return address alone does not identify the overlay.
+extern "C" int jfg_overlay_at(uint32_t addr, uint32_t* rom_out, uint32_t* base_out) {
+    std::lock_guard lock{ overlay_mutex };
+    for (const auto& [ram, ovl] : loaded_overlays) {
+        if (addr >= ram && addr < ram + ovl.size) {
+            *rom_out = ovl.rom;
+            *base_out = ram;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 extern "C" void jfg_overlay_loaded(uint8_t* rdram, recomp_context* ctx) {
@@ -217,7 +232,7 @@ extern "C" void jfg_overlay_loaded(uint8_t* rdram, recomp_context* ctx) {
 
     std::lock_guard lock{ overlay_mutex };
     load_overlays(rom, (int32_t)ram, size);
-    loaded_overlays[ram] = size;
+    loaded_overlays[ram] = LoadedOverlay{ rom, size };
     if (log_overlays) {
         printf("[JFG] overlay rom 0x%08X loaded at 0x%08X (0x%X bytes)\n", rom, ram, size);
     }
@@ -229,7 +244,7 @@ extern "C" void jfg_mm_free(uint8_t* rdram, recomp_context* ctx) {
     std::lock_guard lock{ overlay_mutex };
     auto it = loaded_overlays.find(ptr);
     if (it != loaded_overlays.end()) {
-        unload_overlays((int32_t)ptr, it->second);
+        unload_overlays((int32_t)ptr, it->second.size);
         if (log_overlays) {
             printf("[JFG] overlay at 0x%08X unloaded\n", ptr);
         }
