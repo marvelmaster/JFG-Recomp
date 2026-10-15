@@ -729,7 +729,29 @@ Der vollständige Text dieses Tasks steht unverändert unten. Stand und Messunge
 
 Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über HANDOFF.md und RECOMP.md im GitHub-Repo zurückmelden.
 
-## Last result (Debug quick start, 2026-10-15)
+## Last result (Phase 2 review of fe4c7c6, 2026-10-15): WIP checkpoint, BLOCKED
+
+- **Status:** Menu-free `--jfg-test-start goldwood` NOT implemented. Blocker: the initialisation chain before 0x16D and
+  the callers of 0x5D/0x5C are not reconstructed (RECOMP.md entry "phase 2 review"). A direct start from mainThread
+  is known to hang (NONMATCHING_BUILD.md:158), so no guessed state was written.
+- **Commit(s):** the commit that contains this line (WIP, `git log -1`).
+- **Done in this step:**
+  1. Hook reproducibility: regular generator run; the output equals the Windows RecompiledFuncs copy (60/60 files,
+     CR-insensitive). The hand edit is no longer needed, but the local files are still not committed.
+  2. Flags `--jfg-skip-intro`, `--jfg-skip-cutscenes`, `--jfg-test-start`: refused with "not implemented yet" (no silent ignore).
+  3. tools/test_debug_start.ps1: strict checks (level, player positions, walk distance, save hashes, screenshot), exit 0/1.
+- **Verified:** `build_jfg.bat build` exit 0 (final source). test_debug_start.ps1 PASS: redirect at script ms 63370,
+  first player position at 96866 ms, walk distance 594.2, 0 save files changed (runlogs/debug_start_goldwood_1.*,
+  runlogs/shot_*_118.png). Refusal messages checked on the final exe. Default start: checked earlier on the hook build
+  (no redirect, Goldwood at 116 s); not repeated on the final build.
+- **Not done:** menu-free start; intro and cutscene skip; 10 repeats; 2 normal starts and an invalid-name run on the
+  final build; 30/60-Hz smoke test; start-time comparison beyond one run.
+- **Deviations:** the redirect is kept only as a legacy diagnostic (`--jfg-level`), per the plan.
+- **Open questions for the planner:**
+  - Which function sets up the new-game state before 0x16D (character, progress, spawn), and what must be copied from it?
+  - Is 0x5C "Forest Day Landing" a fixed step after 0x5D, and which state change ends it?
+
+## Previous Last result (Debug quick start, 2026-10-15)
 
 - **Commit(s):** see the commit that contains this line (`git log -1`, message "Debug quick start ...").
 - **What was changed:**

@@ -1203,8 +1203,11 @@ int main(int argc, char** argv) {
                 return EXIT_FAILURE;
             }
         }
-        if (strcmp(argv[i], "--jfg-skip-intro") == 0 || strcmp(argv[i], "--jfg-skip-cutscenes") == 0) {
-            fprintf(stderr, "[JFG] %s: not implemented yet, ignored.\n", argv[i]);
+        // Not implemented yet: refuse instead of silently ignoring the flag (exit code 2).
+        if (strcmp(argv[i], "--jfg-skip-intro") == 0 || strcmp(argv[i], "--jfg-skip-cutscenes") == 0 ||
+            strcmp(argv[i], "--jfg-test-start") == 0) {
+            fprintf(stderr, "[JFG] %s is not implemented yet. Nothing started.\n", argv[i]);
+            return 2;
         }
         if (strcmp(argv[i], "--test-start-button") == 0) {
             jfg_auto_start = true;

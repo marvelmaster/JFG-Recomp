@@ -6,8 +6,11 @@ Everything below this section is the chronological log (oldest first); the newes
 **Debug quick start (2026-10-15 late, opt-in, default off):** `--jfg-level goldwood` redirects the first character
 select (mainChangeLevel 0x16D) to level 0x5D "Forest Day Sequence", char 1, the level the verified route loads. The
 redirect fired at script ms 63334; Goldwood HUD and player at 116 s. Menus are still scripted (not a menu-free start).
-`--jfg-skip-intro` and `--jfg-skip-cutscenes` are accepted but NOT implemented. Only one debug run so far; no 10x
-test, no toggles tested. The 60 Hz validation is paused (see HANDOFF.md Backlog).
+`--jfg-skip-intro`, `--jfg-skip-cutscenes` and `--jfg-test-start` now refuse with "not implemented yet" (phase 2 review,
+entry 2026-10-15 phase 2). The redirect is verified on the final build (PASS, walk 594 units, saves unchanged), but it
+is still a legacy diagnostic: the title and menu route is scripted. BLOCKER: the initialisation chain before 0x16D and
+the callers of 0x5D/0x5C are not yet reconstructed, so a menu-free Goldwood start is not implemented. The 60 Hz
+validation is paused (see HANDOFF.md Backlog).
 
 **Works (verified with screenshots, scripted input):** native Windows exe boots, intro logos, title, menus,
 Select Game / name entry, new game, intro cutscene, Goldwood level playable (move, jump, fire, aim), HUD,
@@ -761,3 +764,27 @@ Findings:
   controllable frame, spawn/camera/state comparison, OFF->ON toggle tests, determinism analysis (RNG, timers).
 - Open risks: the redirect fires at character select, so the game's own new-game state setup before it still runs; char
   id 1 = Juno is an inference from the "Boy Select" overlay name, not verified by screenshot.
+
+## 2026-10-15 (phase 2 review): reproducibility, error refusals, stricter test, blocker (Codex)
+- Hook regeneration: `decomp/recomp/jfg.us.toml` (repo copy = JFG_Decomp toml + the mainChangeLevel hook, only diff)
+  was run through the regular generator (recomp_gen.py, N64Recomp, recomp_anim.py, recomp_fpu.py) in WSL.
+  Output: 60 files. After stripping CR line endings all 60 files are identical to the Windows RecompiledFuncs/ copy,
+  including funcs_12.c (hook at 0x8004665C). So the earlier hand edit equals the generated result. Not committed.
+- Build: build_jfg.bat build exit 0 on the final source (15:26 exe).
+- Flags: --jfg-skip-intro, --jfg-skip-cutscenes and --jfg-test-start now exit with "not implemented yet. Nothing started."
+  (return 2). Unknown --jfg-level names: error, no fallback. The refusal path was checked by reading stderr; the
+  PowerShell exit code was not captured reliably.
+- tools/test_debug_start.ps1 (replaced): fresh process; PASS needs the redirect line, level 0x5D char 1 in the trace,
+  player positions after 100 s, walk distance >= 0.5, unchanged save hashes (SHA-256 of build-cmake\run-jfg\saves),
+  screenshot. Exit 0 = PASS, 1 = FAIL. A running process alone is not a pass.
+  - Result, final build: PASS. redirect at script ms 63370, first player position at 96866 ms, walk distance 594.2,
+    0 save files changed. runlogs/debug_start_goldwood_1.stderr.log, .trace.log, shot_*_118.png.
+  - Note: the earlier PASS at 63373 ms ran on the build before the flag refusal edit; only the flag handling differs.
+- Init chain before 0x16D (task step 2): NOT reconstructed. Known from the trace only: mainChangeLevel calls on the
+  verified route are 0x0, 0x15D, 0x7F, 0x16D (char 1, x5), 0x5D (char 1), 0x5C (char 1). The callers and the game-state
+  writes (save/progress, character, spawn) between these calls are not yet identified.
+- BLOCKER for a menu-free start (task steps 3-4): no proven initialisation path yet. Earlier notes (NONMATCHING_BUILD.md:158)
+  say a direct level start from mainThread hung. Without the callers of 0x16D/0x5D and the progress state, a direct call
+  would be a guess. The landing cutscene 0x5C is still played; no cutscene skip exists.
+- Not done: menu-free start, intro/cutscene skip, 10 repeats, 2 normal starts with this final build, invalid-name run,
+  30/60-Hz smoke test, time comparison with the old path beyond the one redirect measurement.
