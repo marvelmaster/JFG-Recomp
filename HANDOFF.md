@@ -18,8 +18,9 @@ Rules
 
 ## Open task (aktiv): Debug quick start: intro skip, cutscene skip, direct level load (2026-10-15)
 
-- **Status:** Menüfreier Goldwood-Start umgesetzt und getestet (`--jfg-test-start goldwood` / `goldwood-landing`, 2026-10-15
-  evening). Offen: Done-when 2 (Intro-Skip) und 3 (Cutscene-Skip, nur als `goldwood-landing` für Goldwood). Siehe "Last result".
+- **Status:** Schneller menüfreier Goldwood-Start ist Standard (`--jfg-test-start goldwood`, 0x5C ca. 0,6 s nach dem ersten
+  Spielframe; `goldwood-full` = alte Sequenz als Diagnose; 2026-10-15 night). Offen: Done-when 2 (Intro-Skip) und 3
+  (generischer Cutscene-Skip); beide Flags werden weiter abgelehnt. Siehe "Last result".
 - **Goal:** Reproduzierbarer Debug-Schnellstart für den nativen Windows-Port: `--jfg-skip-intro`, `--jfg-skip-cutscenes`,
   `--jfg-level goldwood`, optional `--jfg-test-start goldwood`. Ein echter Direct Level Load ist das Hauptziel;
   schnelleres Durchklicken der Menüs nur Zwischenlösung. Alles Debug, standardmäßig aus.
@@ -730,7 +731,38 @@ Der vollständige Text dieses Tasks steht unverändert unten. Stand und Messunge
 
 Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über HANDOFF.md und RECOMP.md im GitHub-Repo zurückmelden.
 
-## Last result (Norton-off sprint, 2026-10-15 evening, WIP): baseline clean, 0x16D resolved, menu-free start works
+## Last result (fast start, 2026-10-15 night): direct 0x5C validated and made the default `--jfg-test-start goldwood`
+
+- **Commit(s):** the commit that contains this line (`git log -1`), on jfg/main. Earlier: 8035b83, 0611445, 946c14b,
+  7e5aa2a, 50d71b0.
+- **Build:** `build_jfg.bat build` exit 0 (final source).
+- **1. External state A (full 0x16D -> 0x5D -> 0x5C) vs B (direct 0x5C) [Trace]:** RDRAM snapshots in gameplay updates
+  1/3/30/150 after levelInit(0x5C), two runs per variant to filter noise, mapped to symbols. Objects (27 -> 24, same ids
+  and positions), player, camera (controlcam), level/char/mode globals, music (tune 0x40, no ambient): identical.
+  Differences: heap pointers (B allocations +0x47F0), residue of the cutscene levels in buffers rewritten before use
+  (audio, rzip, shadows, fog, texture scroll, camera matrices, fade colour, font window), texture-slot high-water mark
+  (0x167 vs 0x14A), sfxRelativeVolume (0x41 vs 0x7F, no ambient playing, reset by the next amAmbientPlay), gMusicTempo
+  copy, counters. None gameplay-relevant -> no extra init needed. Table: RECOMP.md "night: fast start" section 1.
+- **2. Generator:** regular pipeline (recomp_gen.py -> N64Recomp -> recomp_anim.py -> recomp_fpu.py, WSL) with the repo
+  toml: 60 files, 0 differ from the local RecompiledFuncs. The three new hooks are generated; no hand edits remain.
+  Generated files not committed.
+- **3. Implementation:** `--jfg-test-start goldwood` = trigger at the main loop's level-0 request (mode 2), fallback
+  title request; mainSetDefaultGame + mainSetMode(0); request (0x5C, char 1, region 0, mode 0x10), stack args 1, 0.
+  `--jfg-test-start goldwood-full` = old sequence. `goldwood-landing`, JFG_TESTSTART_EARLY, JFG_DUMP_GAME and the RDRAM
+  snapshot code are removed. Kept env traces: JFG_TRACE_LEVEL (now with SDL ticks), JFG_TRACE_TRAP.
+- **5. Tests (tools/test_menu_free_start.ps1, all RUN_VALID=1, max_instances_seen=1, saves created/deleted/changed 0):**
+  - fast: 10/10 PASS. levelInit(0x5C) script 508-775 ms (mean 622), process 2221-2689 ms (mean 2466). First moving frame
+    script 554-866 ms (mean 704), process 2350-2782 ms (mean 2548); 45-129 ms after the load. Char 1, objSetupPlayers,
+    movement 973-987 units, process alive, HUD present in all 10 screenshots at 2 s (ammo digits), camera behind Juno.
+  - goldwood-full: 2/2 PASS (0x5C at about 50.0 s). Normal start: 2/2 PASS (title 0x15D, no test start).
+  - CLI refusals on the final exe: unknown/missing name exit 1, with --jfg-level exit 1, skip flags exit 2.
+- **Open / risks:** about 1.8 s runtime start-up before the game's first frame (not part of the game path; "< 2 s" holds
+  for the game side, not from process start); state later in the level not compared; HUD only by screenshot; intro
+  skip / generic cutscene skip not implemented; Magnus' welcome dialogue of a fresh game waits for A (normal).
+- **Next step:** if wanted, profile the runtime start-up (window, RT64 device, ROM mapping) separately; otherwise
+  Goldwood test start is done.
+
+## Previous Last result (Norton-off sprint, 2026-10-15 evening, WIP): baseline clean, 0x16D resolved, menu-free start works
 
 - **Commit(s):** 8035b83, 0611445 and the commit that contains this line (`git log -3`), all on jfg/main.
 - **Build:** `build_jfg.bat build` exit 0 after every change (last build 20:19).
@@ -928,5 +960,6 @@ _Partial. "Done when" is NOT met. Details in `decomp/docs/RECOMP.md` (entry 2026
 _(either side; delete when answered)_
 
 ## History
+- 2026-10-15 21:10 Fast start: direct 0x5C validated by state comparison, default `--jfg-test-start goldwood` (10/10 PASS, 0x5C in about 0.6 s game time), generator reproducible (Claude).
 - 2026-10-15 20:35 Norton-off sprint: clean single-process baseline, 0x16D resolved, menu-free `--jfg-test-start goldwood` (10/10 PASS) and `goldwood-landing` (5/5 PASS) (Claude).
 - 2026-10-15 13:00 Repo created; state: playable to Goldwood, mouse aim, optional mouse camera; 60 Hz gameplay checkbox in progress (Codex, 12:12).

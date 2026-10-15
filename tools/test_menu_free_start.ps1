@@ -1,28 +1,33 @@
-# Menu-free start test: JFGRecompiled --jfg-test-start goldwood (no title/menu input at all).
-# No title/menu input. In-game input only (JFG_INPUT_SCRIPT, script time = first pad poll):
-#   UP held 0.4 s every second from 30 s to 69 s: finds the first frame after the 0x5C load in which input moves the
-#     player (resolution 1 s). Walking forward reaches Magnus, whose welcome dialogue then waits for A.
-# Per run it checks (all from this run's PID-bound log and trace, see run_capture.ps1):
-#   - RUN_VALID=1 and max_instances_seen=1
-#   - the test start fired ("--jfg-test-start:" line) and the title level 0x15D was replaced
-#   - the ACTIVE level (levelInit, not only the request) reaches 0x5C "Forest Day Landing" with char 1
-#   - objSetupPlayers ran for 0x5C, player positions exist after it, the player moved (first controllable frame)
-#   - save folder unchanged: same file names (none created, deleted or renamed) and same SHA256 hashes
-#   - screenshot of this PID exists
-# With -Normal the same run is made WITHOUT the flag and must NOT show a test start (regression check).
+# Menu-free start test: JFGRecompiled --jfg-test-start goldwood | goldwood-full (no title/menu input at all).
+#   goldwood (fast, default): 0x5C requested at the main loop's first level-0 request (about 0.5 s after boot).
+#     Input: UP held from 0.2 s to 10.2 s script time, so the first frame in which input moves the player is measured
+#     directly (the input is already held when 0x5C loads).
+#   goldwood-full: title request replaced, the game plays 0x16D -> 0x5D -> 0x5C itself (0x5C at about 50 s).
+#     Input: UP held 0.4 s every second from 30 s to 69 s (first move resolution 1 s).
+#   Walking forward reaches Magnus, whose welcome dialogue of a fresh game then waits for A (normal game behaviour).
+# Per run it checks (all from this run's PID-bound log, trace and screenshot, see run_capture.ps1):
+#   - RUN_VALID=1 and max_instances_seen=1, the process was still running at the end (no crash/exit)
+#   - the test start fired ("--jfg-test-start:" line); no title level 0x15D; goldwood: no 0x16D/0x5D either
+#   - the ACTIVE level (levelInit, not only the request) reaches 0x5C "Forest Day Landing" with char 1 (Juno)
+#   - objSetupPlayers ran for 0x5C, player positions exist after it, the player moved horizontally > 1 unit
+#   - save folder unchanged: no file created, deleted or renamed, same SHA256 hashes
+#   - the screenshot of this run (shot_<run stamp>_<s>.png) exists
+# Times: script ms (first pad poll) and process ms (SDL ticks since SDL init, about process start).
+# With -Normal the run is made WITHOUT the flag and must reach the title (0x15D) without a test start.
 # Exit code: 0 = all runs PASS, 1 = a run failed, 2 = harness error.
-# Usage: powershell -ExecutionPolicy Bypass -File tools\test_menu_free_start.ps1 [-Runs 3] [-Seconds 100] [-Normal]
-#        [-Start goldwood|goldwood-landing] [-EnvExtra "JFG_DUMP_GAME=1"]
-# goldwood-landing loads 0x5C at about 16 s, but the scripted UP starts at 30 s, so its first_move_ms is bounded by
-# the input script, not by the game.
-param([int]$Runs = 1, [int]$Seconds = 100, [switch]$Normal, [string]$Start = "goldwood", [string]$EnvExtra = "")
+# Usage: powershell -ExecutionPolicy Bypass -File tools\test_menu_free_start.ps1 [-Runs 10] [-Seconds 12]
+#        [-Start goldwood|goldwood-full] [-Normal] [-EnvExtra "NAME=value"]
+param([int]$Runs = 1, [int]$Seconds = 0, [switch]$Normal, [string]$Start = "goldwood", [string]$EnvExtra = "")
+$fast = (-not $Normal) -and $Start -eq "goldwood"
+if ($Seconds -le 0) { $Seconds = if ($fast) { 12 } elseif ($Normal) { 40 } else { 75 } }
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $outDir = Join-Path $root "runlogs"
 $runDir = Join-Path $root "build-cmake\run-jfg"
 $saveDir = Join-Path $runDir "saves"
 New-Item -ItemType Directory -Force $outDir | Out-Null
-$walk = (30..69 | ForEach-Object { "$($_ * 1000):UP:400" }) -join ","
+$walk = if ($fast) { "200:UP:10000" } else { (30..69 | ForEach-Object { "$($_ * 1000):UP:400" }) -join "," }
+$shotAt = if ($fast) { 2 } else { $Seconds - 5 }
 function Get-SaveState {
     $h = @{}
     if (Test-Path $saveDir) { Get-ChildItem $saveDir -File | ForEach-Object { $h[$_.Name] = (Get-FileHash $_.FullName -Algorithm SHA256).Hash } }
@@ -34,7 +39,7 @@ for ($n = 1; $n -le $Runs; $n++) {
     $before = Get-SaveState
     # powershell -File drops an empty argument, so -ExtraArgs is only passed when there is something to pass.
     $captureArgs = @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "run_capture.ps1"), "-Seconds", $Seconds,
-        "-Shots", "$($Seconds - 5)", "-NoConsole", "-ScriptTime",
+        "-Shots", "$shotAt", "-NoConsole", "-ScriptTime",
         "-Env", "JFG_HEARTBEAT=1;JFG_TRACE_LEVEL=1;JFG_TRACE_GAMEPLAY=1;$EnvExtra;JFG_INPUT_SCRIPT=$walk")
     if (-not $Normal) { $captureArgs += @("-ExtraArgs", "--jfg-test-start $Start") }
     $capture = @(& powershell @captureArgs)
@@ -61,14 +66,15 @@ for ($n = 1; $n -le $Runs; $n++) {
 
     # 2. active levels (levelInit), first 0x5C load
     $inits = @()
-    foreach ($l in $trace) { if ($l -match "JFG_LEVELINIT ms=(\d+) level=0x([0-9A-F]+) a1=-?\d+ char=(-?\d+)") {
-        $inits += [pscustomobject]@{ ms = [int64]$Matches[1]; level = [Convert]::ToInt32($Matches[2], 16); char = [int]$Matches[3] } } }
+    foreach ($l in $trace) { if ($l -match "JFG_LEVELINIT ms=(\d+) ticks=(\d+) level=0x([0-9A-F]+) a1=-?\d+ char=(-?\d+)") {
+        $inits += [pscustomobject]@{ ms = [int64]$Matches[1]; ticks = [int64]$Matches[2]; level = [Convert]::ToInt32($Matches[3], 16); char = [int]$Matches[4] } } }
     $seq = ($inits | ForEach-Object { "0x{0:X}" -f $_.level }) -join ","
     $landing = $inits | Where-Object { $_.level -eq 0x5C } | Select-Object -First 1
     if ($Normal -and -not ($inits | Where-Object { $_.level -eq 0x15D })) { $err += "normal start did not reach the title level 0x15D (sequence $seq)" }
     if ($Normal -and ($inits | Where-Object { $_.level -eq 0x16D })) { $err += "normal start loaded 0x16D without menu input" }
     if (-not $Normal) {
         if ($inits | Where-Object { $_.level -eq 0x15D }) { $err += "title level 0x15D was loaded" }
+        if ($fast -and ($inits | Where-Object { $_.level -eq 0x16D -or $_.level -eq 0x5D })) { $err += "fast start loaded a cutscene level ($seq)" }
         if (-not $landing) { $err += "level 0x5C never became active (sequence $seq)" }
         elseif ($landing.char -ne 1) { $err += "0x5C loaded with char $($landing.char)" }
     }
@@ -110,14 +116,18 @@ for ($n = 1; $n -le $Runs; $n++) {
     if ($created.Count -or $deleted.Count -or $changed.Count) {
         $err += "saves: created=[$($created -join ',')] deleted=[$($deleted -join ',')] changed=[$($changed -join ',')]" }
 
-    # 5. screenshot of this run and early exit
-    $shot = Get-ChildItem (Join-Path $outDir "shot_*_$($Seconds - 5).png") | Sort-Object LastWriteTime | Select-Object -Last 1
-    if (-not $shot -or $shot.LastWriteTime -lt (Get-Item (Join-Path $outDir "$tag.stderr.log")).LastWriteTime.AddSeconds(-$Seconds - 30)) { $err += "no screenshot" }
-    if ($capture -match "process gone|process ended") { $err += "process exited early" }
+    # 5. screenshot of this run (same stamp as its log) and early exit
+    $stamp = [IO.Path]::GetFileNameWithoutExtension($ownLog) -replace "^run_", ""
+    $shot = Get-Item (Join-Path $outDir "shot_${stamp}_$shotAt.png") -ErrorAction SilentlyContinue
+    if (-not $shot) { $err += "no screenshot shot_${stamp}_$shotAt.png" }
+    if (-not ($capture -match "^RUNNING after")) { $err += "process exited before the end of the run" }
 
     $status = if ($err.Count -eq 0) { "PASS" } else { "FAIL"; $overall = [math]::Max($overall, 1) }
     $landMs = if ($landing) { $landing.ms } else { -1 }
-    "run $n [$status] pid=$runPid levels=$seq land_0x5C_ms=$landMs first_move_ms=$firstMoveMs max_dist=$([math]::Round($dist,1)) " +
+    $landTicks = if ($landing) { $landing.ticks } else { -1 }
+    $moveTicks = if ($landing -and $firstMoveMs -ge 0) { $landing.ticks + ($firstMoveMs - $landing.ms) } else { -1 }
+    "run $n [$status] pid=$runPid levels=$seq land_0x5C_ms=$landMs land_0x5C_process_ms=$landTicks first_move_ms=$firstMoveMs " +
+        "first_move_process_ms=$moveTicks max_dist=$([math]::Round($dist,1)) " +
         "saves_created=$($created.Count) deleted=$($deleted.Count) changed=$($changed.Count) shot=$(if ($shot) { $shot.Name }) log=runlogs\$tag.stderr.log"
     foreach ($e in $err) { "   - $e" }
 }

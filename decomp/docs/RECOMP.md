@@ -1,17 +1,16 @@
 # Static recompilation (Windows build track)
 
-## CURRENT STATUS (2026-10-15 evening) - read this first
+## CURRENT STATUS (2026-10-15 night) - read this first
 Everything below this section is the chronological log (oldest first); the newest entries are at the end.
 
-**Menu-free Goldwood start works (2026-10-15 evening, opt-in, default off, entry "evening, Norton off"):**
-`--jfg-test-start goldwood` replaces the automatic title request (0x15D) with the game's own new-game state
-(mainSetDefaultGame, mainSetMode(0)) and the character-select request (0x16D, char 1 = Juno, mode 0x10). The game then
-plays 0x16D -> 0x5D -> 0x5C by itself; 0x5C is active at about 50 s, the player is controllable within about 0.5 s of
-that load. `--jfg-test-start goldwood-landing` requests 0x5C directly (about 17 s); the game struct at the 0x5C load is
-byte-identical to the full sequence (globals outside it not compared). No menu input, no save read or written.
-tools/test_menu_free_start.ps1: 10 goldwood runs (see log), 5 landing runs, 2 normal starts, all PASS with RUN_VALID=1.
-Still open: intro/cutscene skip flags (refused), exact first controllable frame, state outside the game struct for the
-landing variant, Magnus welcome dialogue of a fresh game waits for A (normal game behaviour).
+**Fast menu-free Goldwood start (2026-10-15 night, opt-in, default off, entry "night: fast start"):**
+`--jfg-test-start goldwood` sets up the game's own new-game state (mainSetDefaultGame, mainSetMode(0)) at the main
+loop's first level-0 request and requests 0x5C "Forest Day Landing" with char 1 (Juno) directly. 0x5C is active about
+0.6 s after the game's first frame (2.2-2.7 s after process start), the player moves about 80 ms after the load.
+State after the load was compared with the full sequence (game struct, objects, player, camera, music, static data):
+no gameplay-relevant difference. 10/10 fast runs, 2/2 `goldwood-full` (old 0x16D -> 0x5D -> 0x5C path, diagnostic),
+2/2 normal starts PASS with RUN_VALID=1; no save file created, deleted or changed. The generator reproduces all hooks
+(0 of 60 generated files differ). Still refused: `--jfg-skip-intro`, `--jfg-skip-cutscenes`.
 
 **Process / Norton (2026-10-15 evening):** with Norton disabled by the user, three runs of a freshly linked exe each
 showed exactly one process (RUN_VALID=1, max_instances_seen=1, watcher: one PID). The earlier double start and restart
@@ -1118,3 +1117,91 @@ Results (all RUN_VALID=1, max_instances_seen=1, saves_created=0 deleted=0 change
   556; with UP held from 5 s the player walked to Magnus (z 199 -> 1188) and his dialogue text rendered correctly.
   Repeats (tools/test_menu_free_start.ps1 -Start goldwood-landing -EnvExtra JFG_TESTSTART_EARLY=1): 2/2 PASS, 0x5C at
   770/766 ms, saves unchanged, RUN_VALID=1. goldwood regression on the same build: PASS (0x5C at 50324 ms).
+
+## 2026-10-15 (night): fast start validated and made the default `--jfg-test-start goldwood` (Claude)
+Labels: [Code], [Trace] (RUN_VALID=1, max_instances_seen=1), [Vermutung].
+
+### 1. External state comparison: A = full sequence (0x16D -> 0x5D -> 0x5C) vs B = direct 0x5C (early trigger)  [Trace]
+Method (temporary instrumentation, removed again): raw 8 MB RDRAM snapshots in the first, third, 30th and 150th gameplay
+update after levelInit(0x5C). levelInit runs trackInit -> objSetupPlayers inside the same main-loop iteration, so update
+1 is "after levelInit and objSetupPlayers"; the player is controllable from update 3 (night entry below), so update 3 is
+"first controllable frame"; 30 and 150 (about 1 s and 6 s) show whether differences go away. Two runs per variant
+(A1, A2, B1, B2, no input). A byte counts as a real difference only if A1 == A2, B1 == B2 and A != B; everything else is
+run-to-run noise (timers, audio buffers, animation). Differences were mapped to symbols (jfg_us_syms_full.txt,
+ver/symbols/*.us.txt, D_<addr> names in the decomp sources) and the object list / player / camera were compared as
+structures. Scripts: scratchpad only (statediff.py, objdiff.py); snapshots not kept.
+
+| Area | Symbols / addresses | A vs B | Persistent? | Gameplay-relevant? |
+|---|---|---|---|---|
+| Game struct (0x538 bytes, incl. game flags) | gameplay -> 0x801E6010 | identical (evening entry) | - | - |
+| Object list | ObjList 0x800F2CA4 / ObjListCount 0x800F2CA8 | identical: 27 objects at update 1, 24 from update 3, same behaviour ids and positions in order | - | no difference |
+| Player | list 0x800F2D0C / 0x800F2D10 | identical: 1 player, behaviour 1, (19.0, -90.0, 199.0) -> (19.0, -101.99, 199.0) | - | no difference |
+| Camera | controlcam 0x800F6DC0 (0x100 bytes) | identical (3 noisy bytes vary inside A too) | - | no difference |
+| Level/char/mode globals (D_800A323C/3240/3250/3264/3268, mainGameMode) | | not in the difference list -> equal | - | - |
+| Music | D_800E94F4 (current tune), D_800E94F5 (ambient) | tune 0x40 in both from update 30 (B from update 3; A still plays the cutscene tune 0x07 at update 1-3); ambient 0 in both | transient | no (same level music) |
+| Ambient volume | sfxRelativeVolume 0x800A066C | A 0x41, B 0x7F, stays | persistent | no: only scales ambientSeqPlayer (audio_manager_1050.c:101/534), no ambient plays, the next amAmbientPlay sets it from its table (audio_manager_1050.c:765) |
+| Music tempo copy | gMusicTempo 0x800E94F8 | A 0x7A100, B 0 | persistent | no: only written by amTunePlay (audio_manager_1050.c:120/130), copy of the player tempo |
+| Heap pointers | track, TrackMem, trackEdges, PLlist/PLgrps/PLpolys, generalBuffer, lines, trigdatbuffers, frontendptrs, GlobalStartOfRomdefList, gFreeQueue, D_800A0E80-EB8, D_800F2CD8/CF0, D_800FF4C8, pointers inside D_800F7888 | same structure, B allocations shifted by +0x47F0 (deterministic per variant) | persistent | no: different heap addresses of the same allocations |
+| Texture slot high-water mark | D_800FF9D0 (textures.c:244-251) | A 0x167, B 0x14A | persistent | no: freed slots are marked id -1 and reused; limit 0x2BD not near |
+| Residue of the cutscene levels (A non-zero, B zero) | audio buffers D_800B0B50/D_800B8B50/audioHeap/tuneCSeqs/D_800E9678, rzip buffer D_800E3760, shadow buffers D_800F33D8/45F0/48F0/52F0, fog table D_800F3D20, texture scroll table D_800F3370, camera matrices D_800FA658/D_800FAB38, track distance D_800F31D8, fade colour D_80102D90/94/AC, font Window | stale contents in slots/buffers the 0x5C code does not read before writing (e.g. fx.c:1663 sets the fade colour when a fade starts, track.c:1873 recomputes the distance, track.c:802/844 only read up to numtexturescrolls) | persistent residue | no |
+| Counters | Time 0x800FD748, D_800A38CC, D_800A06D0 | larger in A (longer run) | transient / counters | no |
+
+Conclusion: direct 0x5C is functionally equivalent for gameplay. Differences are heap addresses, residue of the two
+cutscene levels in buffers that are rewritten before use, a texture-slot high-water mark, two audio values without
+audible effect, and counters. No missing initialisation was found, so no extra original init function is needed.
+Not compared: HUD internals beyond the screenshot; RNG beyond the "noise" class (it differs between runs of the same
+variant, so it is not start-path dependent).
+
+### 2. Generator reproducibility  [Code]
+- Regular pipeline (decomp project tools/recomp_run.sh steps: recomp_gen.py -> N64Recomp -> recomp_anim.py ->
+  recomp_fpu.py) run in WSL with the repo's decomp/recomp/jfg.us.toml (CR removed) into a separate folder
+  (~/jfg_rc_repo; the decomp project was not modified). Output: 60 files, 1027 ra hooks, 14428 relocs.
+- Compared with the local RecompiledFuncs (CR-insensitive): 0 of 60 files differ. The hooks TrapDanglingJump @0x800546AC,
+  levelInit @0x80043E3C and objSetupPlayers @0x8000561C are generated by the toml; no hand edit is needed any more.
+- Generated files are not committed (RecompiledFuncs/ stays local).
+
+### 3. Final implementation (src/main/main.cpp jfg_change_level, CLI in main())  [Code]
+- `--jfg-test-start goldwood` (fast, default): trigger = the main loop's level-0 request with mode 2 (all library inits
+  through the trampoline run before it, evening entry section 10); fallback trigger = the title request 0x15D. At the
+  trigger: mainSetDefaultGame(game), mainSetMode(0), then the request becomes (0x5C, char 1, region 0, mode 0x10) with
+  stack arguments 1, 0. No logo, title, menu, 0x16D or 0x5D; no save read or written.
+- `--jfg-test-start goldwood-full` (diagnostic): the earlier validated path (title request 0x15D -> frontCharSelect
+  request 0x16D; the game plays 0x16D -> 0x5D -> 0x5C).
+- Removed: the `goldwood-landing` name (now the default), the env experiment JFG_TESTSTART_EARLY (no longer needed),
+  the investigation dumps JFG_DUMP_GAME and the temporary RDRAM snapshot code. Kept (env-gated, default off, useful for
+  later level work): JFG_TRACE_LEVEL (mainChangeLevel, levelInit with script ms + SDL ticks, objSetupPlayers) and
+  JFG_TRACE_TRAP (trampoline entry and resolved target).
+- Refusals checked on the final exe: unknown or missing name -> exit 1; with `--jfg-level` -> exit 1;
+  `--jfg-skip-intro` / `--jfg-skip-cutscenes` -> exit 2 (not implemented).
+
+### 4. Regression results (tools/test_menu_free_start.ps1, final exe, all RUN_VALID=1, max_instances_seen=1)  [Trace]
+| Variant | Runs | Levels (levelInit) | Saves created/deleted/changed |
+|---|---|---|---|
+| goldwood (fast) | 10/10 PASS | 0x5C or 0x0,0x5C (the boot level-0 init is sometimes still traced first) | 0/0/0 in every run |
+| goldwood-full | 2/2 PASS | 0x0,0x0,0x16D,0x5D,0x5C; 0x5C at 49987/50004 ms, first move 50062/50094 ms | 0/0/0 |
+| normal (no flag) | 2/2 PASS | 0x0,0x0,0x15D (title), no test start, no 0x16D | 0/0/0 |
+Per fast run: active level 0x5C with char 1, objSetupPlayers after the load, player moved (max 973-987 units), process
+still running at the end, own screenshot at 2 s. HUD: the yellow ammo digits are present in the weapon panel in all ten
+screenshots (723-1034 matching pixels); screenshot runlogs/shot_1015_210034888_2.png shows HUD, camera behind Juno,
+Juno running on the bridge. Input: UP held from 0.2 s, no other input.
+
+Times of the 10 fast runs (script ms = from the game's first pad poll; process ms = SDL ticks since SDL init):
+| Measure | mean | min | max |
+|---|---|---|---|
+| levelInit(0x5C), script ms | 622 | 508 | 775 |
+| levelInit(0x5C), process ms | 2466 | 2221 | 2689 |
+| first frame in which input moves the player, script ms | 704 | 554 | 866 |
+| same, process ms | 2548 | 2350 | 2782 |
+| first move after the load | 82 | 45 | 129 |
+- The game side needs well under 1 s. About 1.8 s of the process time lies before the game's first frame (window, RT64
+  device, ROM mapping, boot); the first run after a fresh link took 4.7 s (cold caches). Target "< 2 s to playable
+  Goldwood": met for the game side (0.55-0.87 s), not from process start (2.35-2.78 s, runtime start-up outside the game).
+- Compared with goldwood-full (0x5C at about 50 s) and the scripted menu route (about 90 s), the fast start is about 60x
+  faster to playable Goldwood.
+
+### 5. Remaining risks / open
+- Equivalence is shown for the state compared above (game struct, objects, player, camera, music, static data);
+  HUD only by screenshot; behaviour later in the level (other triggers, progress after Magnus) not compared.
+- The fresh game shows Magnus' welcome dialogue (waits for A), as in a real new game; the save-slot route does not.
+- The ~1.8 s runtime start-up is not part of this task (runtime/RT64 side).
+- `--jfg-skip-intro` / `--jfg-skip-cutscenes` remain refused.
