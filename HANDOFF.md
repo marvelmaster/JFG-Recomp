@@ -759,8 +759,10 @@ Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über 
 - **Open / risks:** about 1.8 s runtime start-up before the game's first frame (not part of the game path; "< 2 s" holds
   for the game side, not from process start); state later in the level not compared; HUD only by screenshot; intro
   skip / generic cutscene skip not implemented; Magnus' welcome dialogue of a fresh game waits for A (normal).
-- **Next step:** if wanted, profile the runtime start-up (window, RT64 device, ROM mapping) separately; otherwise
-  Goldwood test start is done.
+- **Follow-up 21:35:** stack arguments 5/6 are now written only on the success path (after the game-pointer check,
+  helper calls and context restore); the error path leaves registers and stack unchanged. Re-test: fast 3/3 PASS,
+  normal 1/1 PASS, saves unchanged (runs with JFG_NO_AUDIO=1 because the WASAPI modal box is back on this PC).
+- **Status:** Goldwood direct start is complete. 60 Hz is NOT started; waiting for planner review.
 
 ## Previous Last result (Norton-off sprint, 2026-10-15 evening, WIP): baseline clean, 0x16D resolved, menu-free start works
 

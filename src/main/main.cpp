@@ -793,14 +793,13 @@ extern "C" void jfg_change_level(uint8_t* rdram, recomp_context* ctx) {
     //     and after the 0x5C load was compared with the full sequence (game struct, objects, player, camera, music).
     //   goldwood-full: trigger = the first title request 0x15D (Rare logo page, no input). Request the frontCharSelect
     //     call (record level 0x16D, char 1, record region, 0x10); the game then plays 0x16D -> 0x5D -> 0x5C itself.
-    // Stack arguments 5 and 6 are set to 1, 0 (what the title and frontCharSelect calls pass). No save is read or
+    // Stack arguments 5 and 6 are set to 1, 0 (what the title and frontCharSelect calls pass) right before returning
+    // into mainChangeLevel; the error path changes neither registers nor stack. No save is read or
     // written (mainSaveGame is not called). Every other mainChangeLevel call passes through unchanged.
     static bool test_started = false;
     const bool fast_hit = !jfg_test_start_full && level == 0 && (int32_t)ctx->r7 == 2;
     if (jfg_test_start_char >= 0 && !test_started && (level == 0x15D || fast_hit)) {
         test_started = true;
-        MEM_W(0x10, ctx->r29) = 1;
-        MEM_W(0x14, ctx->r29) = 0;
         const recomp_context saved = *ctx;
         mainGetGame(rdram, ctx);
         const gpr game = ctx->r2;
@@ -816,6 +815,10 @@ extern "C" void jfg_change_level(uint8_t* rdram, recomp_context* ctx) {
         const gpr record = game + jfg_test_start_char * 0x76 + 0x15C;
         const uint32_t level_region = jfg_test_start_full ? (uint32_t)(uint16_t)MEM_HU(0x74, record) : (0x5Cu << 5);
         *ctx = saved;
+        // Only now (game pointer valid, helpers done, registers restored) change the stack arguments 5 and 6, so the
+        // error path above leaves the caller's stack untouched.
+        MEM_W(0x10, ctx->r29) = 1;
+        MEM_W(0x14, ctx->r29) = 0;
         ctx->r4 = (gpr)(int32_t)(level_region >> 5);
         ctx->r5 = (gpr)jfg_test_start_char;
         ctx->r6 = (gpr)(int32_t)(level_region & 0x1F);

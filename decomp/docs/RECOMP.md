@@ -1205,3 +1205,13 @@ Times of the 10 fast runs (script ms = from the game's first pad poll; process m
 - The fresh game shows Magnus' welcome dialogue (waits for A), as in a real new game; the save-slot route does not.
 - The ~1.8 s runtime start-up is not part of this task (runtime/RT64 side).
 - `--jfg-skip-intro` / `--jfg-skip-cutscenes` remain refused.
+
+### 6. Follow-up (2026-10-15 21:35): stack arguments only on the success path  [Code + Trace]
+- jfg_change_level now writes the mainChangeLevel stack arguments 5/6 (1, 0) only after the game-pointer check,
+  mainSetDefaultGame, mainSetMode and the restore of the saved context, right before returning into mainChangeLevel.
+  The error path (invalid game pointer) changes neither registers nor stack.
+- Tests (final exe, RUN_VALID=1, max_instances_seen=1, saves created/deleted/changed 0): fast `goldwood` 3/3 PASS
+  (0x5C at 546-774 ms script time, first move 675-867 ms), normal start 1/1 PASS (title 0x15D).
+- Environment: the WASAPI modal box ("No audio device ... Das Handle ist ungültig") was back on this PC, so these runs
+  used JFG_NO_AUDIO=1 (test-only). Not related to the change. tools/test_menu_free_start.ps1 now reports a missing
+  jfg_trace.log as a FAIL of that run instead of aborting the script.

@@ -55,7 +55,10 @@ for ($n = 1; $n -le $Runs; $n++) {
     $ownLog = ($logLine -replace "^log: ", "").Trim()
     $runPid = [int]($pidLine -replace "^RUN_PID=(\d+).*$", '$1')
     Copy-Item $ownLog (Join-Path $outDir "$tag.stderr.log") -Force
-    Copy-Item (Join-Path $runDir "jfg_trace.log") (Join-Path $outDir "$tag.trace.log") -Force
+    # A missing trace (e.g. the game stopped at a modal box before its first frame) is a FAIL of this run, not a script abort.
+    $traceSrc = Join-Path $runDir "jfg_trace.log"
+    if (Test-Path $traceSrc) { Copy-Item $traceSrc (Join-Path $outDir "$tag.trace.log") -Force }
+    else { Set-Content (Join-Path $outDir "$tag.trace.log") ""; $err += "no jfg_trace.log (game did not reach its first frame)" }
     $stderrText = @(Get-Content (Join-Path $outDir "$tag.stderr.log"))
     $trace = @(Get-Content (Join-Path $outDir "$tag.trace.log"))
 
