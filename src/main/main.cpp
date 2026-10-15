@@ -231,6 +231,8 @@ static uint32_t discarded_output_frames;
 constexpr uint32_t bytes_per_frame = input_channels * sizeof(float);
 
 void queue_samples(int16_t* audio_data, size_t sample_count) {
+    // JFG_NO_AUDIO test mode: no device, nothing to queue (device 0 is never passed to SDL).
+    if (audio_device == 0) return;
     static const bool trace_audio = std::getenv("JFG_TRACE_AUDIO") != nullptr;
     static bool reported_audio = false;
     if (trace_audio && !reported_audio) {
@@ -309,7 +311,7 @@ void queue_samples(int16_t* audio_data, size_t sample_count) {
 size_t get_frames_remaining() {
     constexpr float buffer_offset_frames = 1.0f;
     // Get the number of remaining buffered audio bytes.
-    uint64_t buffered_byte_count = SDL_GetQueuedAudioSize(audio_device);
+    uint64_t buffered_byte_count = audio_device != 0 ? SDL_GetQueuedAudioSize(audio_device) : 0;
 
     // Scale the byte count based on the ratio of sample rates and channel counts.
     buffered_byte_count = buffered_byte_count * 2 * sample_rate / output_sample_rate / output_channels;
@@ -372,7 +374,9 @@ bool reset_audio(uint32_t output_freq) {
         fprintf(stderr, "[JFG] JFG_NO_AUDIO=1: audio device failed (%s); continuing without audio (test mode).\n", SDL_GetError());
     }
 
-    SDL_PauseAudioDevice(audio_device, 0);
+    if (audio_device != 0) {
+        SDL_PauseAudioDevice(audio_device, 0);
+    }
 
     output_sample_rate = output_freq;
     update_audio_converter();
@@ -750,12 +754,15 @@ extern "C" void jfg_change_level(uint8_t* rdram, recomp_context* ctx) {
     if (trace) {
         uint32_t caller_rom = 0, caller_base = 0;
         const uint32_t ra = (uint32_t)ctx->r31;
+        // The word at ra-8 is the jal that made this call when it is direct: jal 0x8004665C = 0x0C011997.
+        // Only read RDRAM (ra 0 at the first call would fault).
+        const uint32_t call_word = (ra >= 0x80000008u && ra < 0x80800000u) ? (uint32_t)MEM_W(0, (gpr)(int32_t)(ra - 8)) : 0;
         if (jfg_overlay_at(ra, &caller_rom, &caller_base)) {
-            jfg_logf("JFG_LEVEL mainChangeLevel level=0x%X char=%d a2=%d a3=%d ra=0x%08X overlay_rom=0x%08X overlay_base=0x%08X off=0x%X\n",
-                level, (int32_t)ctx->r5, (int32_t)ctx->r6, (int32_t)ctx->r7, ra, caller_rom, caller_base, ra - caller_base);
+            jfg_logf("JFG_LEVEL mainChangeLevel level=0x%X char=%d a2=%d a3=%d ra=0x%08X callword=0x%08X overlay_rom=0x%08X overlay_base=0x%08X off=0x%X\n",
+                level, (int32_t)ctx->r5, (int32_t)ctx->r6, (int32_t)ctx->r7, ra, call_word, caller_rom, caller_base, ra - caller_base);
         } else {
-            jfg_logf("JFG_LEVEL mainChangeLevel level=0x%X char=%d a2=%d a3=%d ra=0x%08X overlay=none\n",
-                level, (int32_t)ctx->r5, (int32_t)ctx->r6, (int32_t)ctx->r7, ra);
+            jfg_logf("JFG_LEVEL mainChangeLevel level=0x%X char=%d a2=%d a3=%d ra=0x%08X callword=0x%08X overlay=none\n",
+                level, (int32_t)ctx->r5, (int32_t)ctx->r6, (int32_t)ctx->r7, ra, call_word);
         }
     }
     // Trigger: the first character-select request (0x16D "Boy Select Sq") after the start. The verified route in
@@ -768,6 +775,23 @@ extern "C" void jfg_change_level(uint8_t* rdram, recomp_context* ctx) {
             jfg_debug_level, jfg_debug_char, (unsigned long long)(jfg_script_begin_ms ? now - jfg_script_begin_ms : 0));
         ctx->r4 = (gpr)(int32_t)jfg_debug_level;
         ctx->r5 = (gpr)(int32_t)jfg_debug_char;
+    }
+}
+
+// Trace at the entry of TrapDanglingJump (0x80054530, the game's overlay trampoline). It tail-jumps into the target
+// and keeps ra, so the "jal" at ra-8 is the call site that invoked the trampoline. JFG_TRACE_TRAP=1 only.
+extern "C" void jfg_trap_trace(uint8_t* rdram, recomp_context* ctx) {
+    static const bool trace = std::getenv("JFG_TRACE_TRAP") != nullptr;
+    if (!trace) return;
+    const uint32_t ra = (uint32_t)ctx->r31;
+    const uint32_t jal = ra - 8;
+    uint32_t rom = 0, base = 0;
+    if (jfg_overlay_at(jal, &rom, &base)) {
+        jfg_logf("JFG_TRAP ra=0x%08X jal=0x%08X a0=0x%08X a1=0x%08X a2=0x%08X a3=0x%08X overlay_rom=0x%08X overlay_base=0x%08X off=0x%X\n",
+            ra, jal, (uint32_t)ctx->r4, (uint32_t)ctx->r5, (uint32_t)ctx->r6, (uint32_t)ctx->r7, rom, base, jal - base);
+    } else {
+        jfg_logf("JFG_TRAP ra=0x%08X jal=0x%08X a0=0x%08X a1=0x%08X a2=0x%08X a3=0x%08X overlay=none\n",
+            ra, jal, (uint32_t)ctx->r4, (uint32_t)ctx->r5, (uint32_t)ctx->r6, (uint32_t)ctx->r7);
     }
 }
 

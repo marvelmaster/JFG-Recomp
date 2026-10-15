@@ -729,7 +729,34 @@ Der vollständige Text dieses Tasks steht unverändert unten. Stand und Messunge
 
 Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über HANDOFF.md und RECOMP.md im GitHub-Repo zurückmelden.
 
-## Last result (step 1 call graph, 2026-10-15, WIP): call graph partly proven, minimal init chain NOT established
+## Last result (level dispatcher review, 2026-10-15, WIP): trampoline + loader + 0x5D/0x5C proven, 0x16D target open
+
+- **Commit(s):** the commit that contains this line (`git log -1`).
+- **0x80054530 = TrapDanglingJump** (src/hasm/ido/trapDanglingJump.s). Runtime overlay trampoline: reads ra-8 (the JAL),
+  loads the overlay, tail-calls the target WITHOUT changing ra. That is why ra in mainChangeLevel is the trampoline's caller.
+  Trace proof via JFG_TRAP pairing (adjacent trampoline line, same ra) for 0x5D, 0x5C, 0x15D and 0x0 (frontUpdate).
+- **0x5D and 0x5C:** both from animseqProcessCommandList command 0x7A (anim.c:1847-1874), via the trampoline at 0x80077B0C.
+  So the Goldwood landing is a second execution of the same cutscene command, not a separate code path.
+- **Loader (proven by code):** mainChangeLevel only writes the request. func_80046070 (main.c:1259), called from the main loop
+  (main.c:736), counts D_800A3294 down, then runs levelInit (level.c), then sets D_800A3294 = 0 and D_800A32C4 = 1 as the
+  "level changed" flag. Players are set up in overlay 24 trackInit -> objSetupPlayers (not yet tied to a C caller).
+- **0x7F:** overlay index 41 (decomp o42). Generated code matches overlay_42.c:618 (a0 = 0x7F, a3 = 5, jal mainChangeLevel).
+  The runtime call goes through a RAM stub; the runtime-to-link offset mapping is NOT verified.
+- **0x16D: NOT proven.** The caller is a trampoline in overlay index 57 (off 0x22C) with args (0, 0, 3, pol). An
+  intermediate target changes the level to 0x16D and tail-calls mainChangeLevel. That target is not identified. Overlay 57
+  is decomp o59 by name (credits), which conflicts with the generated code at that offset.
+- **Audio test mode (JFG_NO_AUDIO=1):** no SDL call with device 0 any more (reset_audio, queue_samples, get_frames_remaining).
+  Normal audio path unchanged. Build exit 0. Route run with JFG_NO_AUDIO reached 0x5D and 0x5C.
+- **Blockers / open:**
+  - Identify the 0x16D trampoline target (decode the relocation entry at 0x803434EC, or hook its entry by name).
+  - Runtime-to-link mapping for overlays (0x7F and 0x16D).
+  - Who starts overlay 24 and where the player control gate is set.
+  - The condition of command 0x7A (script timing) and whether 0x5C is decided by the script.
+  - Audio endpoint on this PC fails (WASAPI "Das Handle ist ungültig"); normal start needs a fix there first.
+- **Not done:** Step 2 new-game state, Step 5 `--jfg-test-start`, Step 4 harness hardening (save create/delete checks,
+  exit codes via a reliable process handle, 10 runs). No new redirects. No cutscene bypass.
+
+## Previous Last result (step 1 call graph, 2026-10-15, WIP): call graph partly proven, minimal init chain NOT established
 
 - **Done:** call-graph table with [Code] / [Trace] / [Vermutung] labels in RECOMP.md ("step 1, call graph").
   - 0x142 is never called on the verified route. 0x7F comes from the save-load path (o42, overlay index 41). 0x5D comes

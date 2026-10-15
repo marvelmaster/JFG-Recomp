@@ -105,6 +105,12 @@ func = "mainChangeLevel"
 before_vram = 0x8004665C
 text = "{ extern void jfg_change_level(uint8_t*, recomp_context*); jfg_change_level(rdram, ctx); }"
 
+# Trace only (JFG_TRACE_TRAP=1): entry of TrapDanglingJump, the overlay trampoline at 0x80054530 (src/hasm/ido/trapDanglingJump.s).
+[[patches.hook]]
+func = "TrapDanglingJump"
+before_vram = 0x80054530
+text = "{ extern void jfg_trap_trace(uint8_t*, recomp_context*); jfg_trap_trace(rdram, ctx); }"
+
 [[patches.hook]]
 func = "__scHandleRetrace"
 before_vram = 0x800506E8

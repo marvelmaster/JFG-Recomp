@@ -826,3 +826,73 @@ main thread has been shown to work (NONMATCHING_BUILD.md:158 says it hung).
 Next concrete steps: decode the jal word at ra-8 in RDRAM at call time to get the exact call target (no guessing of
 functions); identify 0x80054530 (funcs_17.c) and what calls it; find the loader that reads D_800A3250 (grep the generated
 main loop for D_800A3250 / 0xA3250 reads); verify overlay 57 identity by comparing the ROM bytes with the loaded RAM.
+
+## 2026-10-15 (level dispatcher review): trampoline, loader, callers (Codex)
+Labels: [Code] decomp source or generated code; [Trace] measured in a run (JFG_TRACE_LEVEL=1, JFG_TRACE_TRAP=1, JFG_NO_AUDIO=1,
+default route); [Vermutung] not proven.
+
+### 1. 0x80054530 = TrapDanglingJump (overlay trampoline)  [Code]
+- Symbol: jfg_us_syms_full.txt:692 "80054530 TrapDanglingJump"; source src/hasm/ido/trapDanglingJump.s (LEAF(TrapDanglingJump)).
+- Arguments: a0-a3 and f12-f15 are saved and restored unchanged. Input: ra (t5 = ra-8 = the JAL that called it).
+- Behaviour (file header): finds the relocation entry for that JAL, loads the overlay if needed (runlinkDownloadCode),
+  computes the target inside the loaded overlay, restores arguments and TAIL-CALLS the target. It does not return on success.
+- Consequence: ra is not changed by the trampoline. The target sees ra = the original caller of the trampoline. That is why
+  a trace at mainChangeLevel shows the return address of the code that called the trampoline, not of the real caller chain.
+- Two kinds of call sites: (a) static "jal 0x80054530" in code (e.g. frontUpdate, animseqProcessCommandList, main loop);
+  (b) runtime stubs: callwords at ra-8 point into RAM (0x802B1970, 0x8039D014 seen), so runlink rewrote some call sites.
+
+### 2. Trace proof of the trampoline path (JFG_TRAP pairing, adjacency + same ra)  [Trace]
+- 0x5D and 0x5C: JFG_TRAP ra=0x80077B14 jal=0x80077B0C (animseqProcessCommandList) directly followed by mainChangeLevel
+  with the same ra. Proven for both (2054 trap lines with this site in the run).
+- 0x15D and 0x0 (a3=24): JFG_TRAP ra=0x80058B30 jal=0x80058B28 and ra=0x80058B40 jal=0x80058B38 (frontUpdate) directly before.
+- 0x0 (a3=2) with ra=0x800451BC: NOT proven. The trampoline line for jal 0x800451B4 (func_80044938) was not adjacent.
+- 0x7F: NOT via trampoline. The word at ra-8 is "jal 0x802B1970" (a RAM stub), not "jal 0x8004665C".
+- 0x16D: NOT directly. Trampoline JFG_TRAP ra=0x803434F4 jal=0x803434EC (overlay index 57, off 0x22C) with a0=0, a1=0,
+  a2=3, a3=0x800FB438 (symbol "pol", a polygon buffer). The following mainChangeLevel call has level 0x16D, char 1. So the
+  trampoline target X changes the arguments and then tail-calls mainChangeLevel. X is NOT identified (Vermutung: a level/
+  character chooser; relocation table not decoded).
+
+### 3. Callers table (what is proven)
+| Level | Caller (trace) | Proof level |
+|---|---|---|
+| 0x0 (boot) / 0x15D / 0x0 (mode 24) | frontUpdate (funcs_18) via trampoline, jal 0x80058B28 / 0x80058B38 | Trace, adjacent trap |
+| 0x0 (mode 2) | func_80044938 main loop, jal 0x800451B4 | Trace only as ra; trampoline not adjacent |
+| 0x7F (mode 5) | overlay index 41 (decomp o42), ROM 0x01F5F0C8, base 0x8027BFA0, off 0x1E8 | Code: generated overlay code at link 0x83A01248 = a0 0x7F, a3 5, jal mainChangeLevel. This matches overlay_42.c:618 exactly. The runtime-to-link offset mapping is NOT verified (0x1E8 vs link 0x124C). Runtime call goes through a RAM stub |
+| 0x16D (mode 16, char 1) | overlay index 57, off 0x22C -> trampoline X | Trace (see 2). Overlay 57 is decomp o59 by section name, which is credits code. Conflict: generated link 0x84B0022C is an addu, not a call. Unresolved |
+| 0x5D (mode 16, char 1) | animseqProcessCommandList, command 0x7A | Code: anim.c:1847-1874 (argB = cmd[2] & 0xFFF, argF = mainGetNextCharacter, argC, argA = frontGetMode or 0x17, then mainChangeLevel(argB, argF, argC, argA, 1, 0)). Trace: trampoline proven (section 2) |
+| 0x5C (mode 16, char 1) | same site, same command 0x7A, next level value | Trace: same ra and same trampoline jal as 0x5D |
+So the Goldwood landing sequence changes level through two executions of the same cutscene command 0x7A in the animation
+script (first 0x5D, then 0x5C). The landing is not a separate code path.
+
+### 4. Level loader (who acts on the request)  [Code]
+- mainChangeLevel (main.c:1174) only writes D_800A3250 (level), D_800A3AB0 (char), D_800A3264 (mode), D_800A3268 (region),
+  and D_800A3294 = 0x1E when the fade starts.
+- func_80046070(delayDat) (main.c:1259), called from func_80044938 (main.c:736) and once with 0x1E (main.c:398):
+  1. Fade countdown: D_800A3294 -= delta; return while > 0 (main.c:1293-1297).
+  2. On expiry: level type, world (mainSetLevelWorld), region record into the character's record (gameplay+(char&3)*0x76+0x15C).
+  3. Frees: mmFlushFreeStack, runlink module frees, levelFreeAll (if D_800A3298 set).
+  4. Current level := requested: D_800A323C = D_800A3250 (main.c:1453-1456), then viChangeMode/viChangeBuffers.
+  5. levelInit(D_800A323C, D_800A3244, D_800A3240, D_800A3248) (main.c:1530; level.c:1): level header from ROM (piRomLoadSection),
+     lights, colour cycle, squadsInitialise, objSetAnimGroup, refractInit, animseqSetupGroup, track fog, camSetNo (level.c:387-390).
+  6. Object list and players: overlay 24 trackInit (overlays/o24/overlay_24.c:47-63): objLoadObjList x2, animseqLoadLevelData,
+     objSetupPlayers(arg2) (player setup), shadows, sky. No C caller of trackInit in the decomp; how the overlay is started is
+     [Vermutung] (runlink/overlay init path).
+  7. Completion: D_800A3294 = 0, D_800A3298 = 1, D_800A32C4 = 1 (main.c:1537-1539). The main loop reads D_800A32C4 and calls
+     viFrameRateReset with delayDat = 2 (main.c:~730). D_800A32C4 is cleared at the start of the next func_80046070 call.
+- Player control gate: not identified yet (joyRead/controlPlayer conditions not traced).
+
+### 5. Audio test mode (JFG_NO_AUDIO=1) made safe  [Code, src/main/main.cpp]
+- reset_audio: after a failed SDL_OpenAudioDevice with JFG_NO_AUDIO set, audio_device stays 0 and SDL_PauseAudioDevice is not
+  called for device 0.
+- queue_samples returns at once when audio_device == 0. get_frames_remaining uses 0 queued bytes for device 0 (what SDL
+  returned anyway). The normal path (device != 0) is unchanged.
+- Build verified (exit 0). Route run with JFG_NO_AUDIO=1 reached 0x5D and 0x5C and ran to the end of the time window.
+  Normal start WITH audio was not re-run: in this environment it stops at the audio modal box (see "Audio blocker" in the
+  previous entry). Environment issue: check the default audio endpoint on the PC.
+
+### Open points (not guessed)
+- Trampoline target X for 0x16D (decode the overlay relocation entry at 0x803434EC, or hook the entry of X by its name).
+- Runtime-to-link mapping for overlays (0x7F: 0x1E8 vs 0x124C; 0x16D: no matching call in generated code at 0x22C).
+- Who starts overlay 24 (trackInit) and where the player control gate is set.
+- Condition of cutscene command 0x7A (script timing) and where 0x5C is decided.
+- Call of 0x0 (mode 2) from func_80044938 (ra 0x800451BC): trampoline pairing missing.
