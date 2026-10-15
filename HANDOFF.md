@@ -16,7 +16,11 @@ Rules
 
 ---
 
-## Open task (done 2026-10-16, see Last result): Same-frame skeletal mesh diagnosis (2026-10-15 23:35)
+## Open task (done 2026-10-16, see Last result): Mesh fix production check (follow-up to 1b1fad6)
+
+Make the RT64 mesh fix production-ready without re-examining its root cause: clean-checkout patch reproducibility (incl. the plume readback fix as a separate patch), aspect regression 4:3/16:9/21:9, viewport/split screen, identify the 160x160 pass, other models, off-screen passes/reflections, remove root-cause experiments (JFG_FORCE_Z etc.), harden tools/test_skeletal_mesh.ps1, regression, docs, commit/push to jfg/main. No 60 Hz physics work. User authorizes proceeding without planner review.
+
+## Previous task: Same-frame skeletal mesh diagnosis (2026-10-15 23:35, done 2026-10-16 00:10)
 
 Continue from a263116. First close the same-frame evidence gap: capture the GPU framebuffer and actual transform output/inputs for one identified display-list workload. Compare a concrete broken Juno triangle against CPU and Magnus in the same frame. Fix only the first proven incorrect stage; no character special cases. No further 60 Hz physics work. Finish with regressions, reproducible lib patches, build, documentation and push to jfg/main. User explicitly authorizes proceeding without planner review.
 
@@ -735,7 +739,34 @@ Der vollständige Text dieses Tasks steht unverändert unten. Stand und Messunge
 
 Bitte den Auftrag eigenständig abarbeiten und das vollständige Ergebnis über HANDOFF.md und RECOMP.md im GitHub-Repo zurückmelden.
 
-## Last result (skeletal meshes, 2026-10-16): "sliced" character models fixed in RT64
+## Last result (mesh fix production check, 2026-10-16): reproducible, all aspect modes PASS
+
+- **Commit(s):** the commit that contains this line (`git log -1`), on jfg/main; builds on 1b1fad6.
+- **Build:** `build_jfg.bat build` exit 0 after the clean-up.
+- **Patches [Trace]:** lib-patches/rt64.patch regenerated; in a fresh worktree of pinned rt64 6f1c2d9 it applies cleanly and
+  gives files identical to the tested tree. NEW lib-patches/plume.patch (pinned plume d890ac8): `copyTextureRegion` used the
+  null destination texture of a texture->buffer copy for setSamplePositions; needed only by the JFG_CAPTURE_DL colour readback
+  (crashed without it). Separate from the mesh fix; README lists it. No other local RT64/plume/runtime change needed.
+- **Mesh code [Code]:** billboard sprite loads take the perspective/2D class of their anchor load (vertex 0); otherwise unchanged.
+- **Aspect [Trace]:** capture check per model and viewport: 16:9 Expand -> all 3D models one scale 0.75; 4:3 Original -> 1.0;
+  21:9 (1890x810) -> 0.571 = (4/3)/(21/9); HUD viewport 1.0 in all; y/w equal. Screenshots: Juno (jump, turn, run, back, side),
+  reflection, HUD fine in all three.
+- **160x160 viewport [Trace]:** = the 2D HUD (weapon/ammo box top left, health ring bottom left), orthographic, no Z; unchanged.
+- **Off-screen [Trace]:** 64x64 pass (DL 760) scale 1.0, untouched; pool reflection coherent.
+- **Split screen:** not reachable - single-player mode reports only pad 1 connected and the input script drives pad 1 only [Code].
+- **Models:** Juno, Magnus (DL 681), Vela (title), further start-area models and billboards OK; enemies/NPCs/other levels not reached.
+- **Diagnostics:** kept JFG_CAPTURE_DL, JFG_TRACE_DMA, JFG_DUMP_DL, JFG_TRACE_APPDL, JFG_DUMP_UCODE. Removed JFG_FORCE_Z, JFG_CULL,
+  JFG_TRACE_TRI, JFG_TRACE_VTXID(_VOFF), JFG_TRACE_VTXCMD, JFG_TRACE_MTXRANGE, JFG_TRACE_MATRIX_PAIR_AT (+ main.cpp pair capture), JFG_NO_BILLBOARD.
+- **Tools:** test_skeletal_mesh.ps1 also requires its own 4 screenshots and the capture files; -Aspect Expand|Original
+  (graphics.json restored, hash-checked), -WindowSize W,H. run_capture.ps1 -WindowSize (DPI aware).
+- **Regression:** mesh 30 Hz x3, 60 Hz x1, 4:3 x1, 21:9 x1 PASS; fast start and normal start PASS. All RUN_VALID=1,
+  max_instances_seen=1, saves unchanged, JFG_NO_AUDIO=1 (WASAPI box on this PC without it - environment).
+- **Open render risks:** pre-existing water overlay seam at the 4:3 borders in widescreen (also before the fix; [Vermutung] RDP
+  rect/framebuffer effect); 4-way split screen under ADJUST untested; enemies/other levels unchecked; 60 Hz jump paused.
+- **Next task (suggestion):** either the widescreen water overlay seam (identify the RDP command, RT64 extend option), or a pad-2
+  input harness for split screen; then resume the 60 Hz jump physics.
+
+## Previous Last result (skeletal meshes, 2026-10-16): "sliced" character models fixed in RT64
 
 - **Commit(s):** the commit that contains this line (`git log -1`), on jfg/main.
 - **Build:** `build_jfg.bat build` exit 0. lib-patches/rt64.patch regenerated and checked: applies cleanly to the pinned
@@ -1016,6 +1047,7 @@ _Partial. "Done when" is NOT met. Details in `decomp/docs/RECOMP.md` (entry 2026
 _(either side; delete when answered)_
 
 ## History
+- 2026-10-16 02:00 Mesh fix production check: plume readback patch, 4:3/16:9/21:9 PASS, HUD 160x160 identified, experiments removed (Claude).
 - 2026-10-16 00:10 Sliced character models fixed (RT64 per-load projection + aspect AUTO); new mesh test (Claude).
 - 2026-10-15 23:00 60 Hz: runtime SI requeue spin fixed (30/60 updates/s real), texture scroll fixed, A/B tools; jump still +6..22 % (Claude).
 - 2026-10-15 21:10 Fast start: direct 0x5C validated by state comparison, default `--jfg-test-start goldwood` (10/10 PASS, 0x5C in about 0.6 s game time), generator reproducible (Claude).

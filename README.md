@@ -31,6 +31,7 @@ Requirements: Visual Studio 2022 with "C++ Clang Compiler for Windows", CMake, N
    `git -C lib/N64ModernRuntime apply ../../lib-patches/N64ModernRuntime.patch`,
    `git -C lib/N64ModernRuntime/N64Recomp apply ../../../lib-patches/N64Recomp.patch`,
    `git -C lib/rt64 apply ../../lib-patches/rt64.patch`,
+   `git -C lib/rt64/src/contrib/plume apply ../../../../lib-patches/plume.patch`,
    `git -C lib/RecompFrontend apply ../../lib-patches/RecompFrontend.patch`
 3. Generate the recompiled code from your ROM (WSL, N64Recomp built in `~/N64Recomp`): see `decomp/tools/recomp_run.sh`
    and `decomp/docs/RECOMP.md`; copy the output to `RecompiledFuncs/`. Audio microcode: `tools/regenerate_audio_rsp.sh`.

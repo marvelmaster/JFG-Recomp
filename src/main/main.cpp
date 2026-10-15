@@ -1094,61 +1094,7 @@ extern "C" void jfg_mouse_camera_post(uint8_t* rdram, recomp_context* ctx) {
 // Debug (env JFG_TRACE_SCALE=1): hook right after gen_anim_data in modGenAnimMatrices (s3 = model header,
 // sp+0x14 = tilt/command list). Logs the tilt command list and the per-joint scale table (0x800A720C, 3 u16 per
 // joint, 0 = unscaled) whenever a model has non-zero scales.
-// Bounded CPU/RT64 pair capture, keyed by actual RDRAM matrix buffer address.
-// Keep both generations of each double buffer for diagnosing stale-frame reads.
-struct JfgMatrixSnapshot { uint32_t address, serial; std::array<float, 16> values; };
-static std::mutex jfg_matrix_pair_mutex;
-static std::vector<JfgMatrixSnapshot> jfg_matrix_snapshots;
-static void jfg_capture_matrix_pair(uint8_t* rdram, recomp_context* ctx) {
-    static const char* at = std::getenv("JFG_TRACE_MATRIX_PAIR_AT");
-    static uint32_t serial = 0;
-    if (!at || serial >= 6 || !jfg_script_begin_ms ||
-        SDL_GetTicks64() - jfg_script_begin_ms < std::strtoull(at, nullptr, 10) ||
-        MEM_BU(0x4F, ctx->r19) != 21) return;
-    const gpr inst = ctx->r20;
-    const int buffer = MEM_BU(0x0B, inst);
-    const gpr base = (gpr)(int32_t)MEM_W(0x10 + buffer * 4, inst);
-    std::lock_guard lock(jfg_matrix_pair_mutex);
-    ++serial;
-    jfg_logf("MTXPAIR CPU serial=%u inst=%08X buffer=%d base=%08X ms=%llu\n", serial,
-        uint32_t(inst), buffer, uint32_t(base), (unsigned long long)(SDL_GetTicks64() - jfg_script_begin_ms));
-    for (int joint = 0; joint < 21; ++joint) {
-        JfgMatrixSnapshot snap{(uint32_t(base) & 0xFFFFFF) + uint32_t(joint * 64), serial, {}};
-        for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) {
-            // gen_anim_data writes 4x3; conv_mult_matrix supplies the affine W column.
-            snap.values[r * 4 + c] = c == 3 ? (r == 3 ? 1.0f : 0.0f) : jfg_getf(rdram, base, joint * 64 + r * 16 + c * 4);
-        }
-        jfg_matrix_snapshots.push_back(snap);
-    }
-}
-extern "C" void jfg_compare_decoded_matrix(uint32_t address, uint32_t task, const float* decoded) {
-    static const bool enabled = std::getenv("JFG_TRACE_MATRIX_PAIR_AT") != nullptr;
-    if (!enabled) return;
-    static unsigned printed = 0;
-    std::lock_guard lock(jfg_matrix_pair_mutex);
-    if (printed >= 252) return;
-    const JfgMatrixSnapshot* best = nullptr;
-    float best_error = 1e30f;
-    for (const auto& snap : jfg_matrix_snapshots) {
-        if (snap.address != address) continue;
-        float error = 0;
-        for (int i = 0; i < 16; ++i) error = std::max(error, std::abs(snap.values[i] - decoded[i]));
-        if (error <= best_error) { best_error = error; best = &snap; }
-    }
-    if (!best) return;
-    ++printed;
-    std::string values;
-    char pair[96];
-    for (int i = 0; i < 16; ++i) {
-        snprintf(pair, sizeof pair, " %.9g/%.9g", double(best->values[i]), double(decoded[i]));
-        values += pair;
-    }
-    jfg_logf("MTXPAIR GPU task=%u addr=%08X cpu_serial=%u max_error=%.9g cpu/decoded=%s\n",
-        task, address, best->serial, double(best_error), values.c_str());
-}
-
 extern "C" void jfg_trace_anim_scale(uint8_t* rdram, recomp_context* ctx) {
-    jfg_capture_matrix_pair(rdram, ctx);
     static const bool enabled = std::getenv("JFG_TRACE_SCALE") != nullptr;
     static unsigned lines = 0;
     if (!enabled || lines > 300) return;

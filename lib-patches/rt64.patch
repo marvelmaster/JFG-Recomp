@@ -148,10 +148,10 @@ index 69c35d2..c01aa92 100644
 +};
 diff --git a/src/gbi/rt64_gbi_f3djfg.cpp b/src/gbi/rt64_gbi_f3djfg.cpp
 new file mode 100644
-index 0000000..ad0984d
+index 0000000..7d7bac8
 --- /dev/null
 +++ b/src/gbi/rt64_gbi_f3djfg.cpp
-@@ -0,0 +1,309 @@
+@@ -0,0 +1,212 @@
 +// JFG DMA command decoding for RT64. Encodings verified against the JFG
 +// microcode identity and GLideN64's documented F3DJFG command implementation.
 +#include "rt64_gbi_f3djfg.h"
@@ -166,7 +166,6 @@ index 0000000..ad0984d
 +#include <algorithm>
 +
 +extern "C" void jfg_logf(const char* fmt, ...);
-+extern "C" void jfg_compare_decoded_matrix(uint32_t address, uint32_t task, const float* decoded);
 +extern "C" uint32_t jfgAppCalls; // display lists handed to RT64 (rom_decompression.cpp)
 +
 +namespace RT64::GBI_F3DJFG {
@@ -198,31 +197,7 @@ index 0000000..ad0984d
 +        memcpy(&result, state->RDRAM + (address ^ 2), 2);
 +        return result;
 +    }
-+    // JFG_TRACE_TRI: per-task triangle statistics (screen coverage of 3D triangles).
-+    struct TriStats {
-+        uint32_t tris = 0, allFront = 0, someBehind = 0, rightHalf = 0, leftHalf = 0, culledFlag = 0, vtxLoads = 0, matrices = 0, mulMatrices = 0;
-+        float minX = 1e9f, maxX = -1e9f, minY = 1e9f, maxY = -1e9f;
-+    };
-+    static TriStats triStats;
-+    // JFG_TRACE_VTXID=<display list number (jfgAppCalls)>: log every vertex load (vertex index, count, dst, matrix slot and the matrix id
-+    // = (address - matrixOffset) / 64 loaded into that slot) of that one RSP task, for offline checks.
-+    static int jfgSlotIds[16] = {};
-+    static uint32_t jfgTaskCounter = 0;
-+    static bool jfgTraceVtxId() {
-+        static const uint32_t task = std::getenv("JFG_TRACE_VTXID") ? uint32_t(std::atoi(std::getenv("JFG_TRACE_VTXID"))) : 0;
-+        return task != 0 && jfgAppCalls >= task && jfgAppCalls <= task + 400 && (jfgAppCalls % 50) == 0;
-+    }
 +    static void reset(State *state) {
-+        static const bool traceTri = std::getenv("JFG_TRACE_TRI") != nullptr;
-+        static uint32_t printed = 0;
-+        if (traceTri && triStats.tris > 50 && printed < 12) {
-+            ++printed;
-+            const TriStats &t = triStats;
-+            fprintf(stderr, "JFG_TRISTATS tris=%u allFront=%u someBehind=%u leftHalf=%u rightHalf=%u noCullFlag=%u vtxLoads=%u mtx=%u mulMtx=%u bbox=%.0f..%.0f x %.0f..%.0f\n",
-+                t.tris, t.allFront, t.someBehind, t.leftHalf, t.rightHalf, t.culledFlag, t.vtxLoads, t.matrices, t.mulMatrices, double(t.minX), double(t.maxX), double(t.minY), double(t.maxY));
-+        }
-+        triStats = {};
-+        ++jfgTaskCounter;
 +        GBI_F3D::reset(state);
 +        state->rsp->jfg = {};
 +        state->rsp->jfg.matrices.fill(hlslpp::float4x4::identity());
@@ -247,26 +222,6 @@ index 0000000..ad0984d
 +        FixedMatrix fixed;
 +        memcpy(&fixed, state->RDRAM + address, sizeof(fixed));
 +        auto m = fixed.toMatrix4x4();
-+        static const bool tracePair = std::getenv("JFG_TRACE_MATRIX_PAIR_AT") != nullptr;
-+        if (tracePair && multiply) {
-+            float decoded[16];
-+            for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) decoded[r * 4 + c] = float(m[r][c]);
-+            jfg_compare_decoded_matrix(address, jfgAppCalls, decoded);
-+        }
-+        static const bool traceMtxRange = std::getenv("JFG_TRACE_MTXRANGE") != nullptr;
-+        if (traceMtxRange && multiply) {
-+            // Joint matrices are rotation(+scale) + translation: |rotation| stays ~<= 2. Larger values mean the
-+            // RSP read data that was not (yet) converted to s15.16, or the wrong buffer.
-+            static uint32_t bad = 0, total = 0;
-+            ++total;
-+            float mx = 0.0f;
-+            for (uint32_t r = 0; r < 3; ++r) for (uint32_t c = 0; c < 3; ++c) mx = std::max(mx, std::abs(float(m[r][c])));
-+            if (mx > 4.0f && bad < 40) {
-+                ++bad;
-+                jfg_logf("JFG_MTXRANGE bad joint matrix %u/%u addr=%08X slot=%u maxrot=%g row0=%g %g %g\n", bad, total, address, slot,
-+                    double(mx), double(float(m[0][0])), double(float(m[0][1])), double(float(m[0][2])));
-+            }
-+        }
 +        j.matrices[slot] = multiply ? hlslpp::mul(m, j.matrices[0]) : m;
 +        if (FILE *f = captureFile(state)) {
 +            fprintf(f, "M %08X %08X addr=%08X slot=%u mul=%u moff=%08X raw", (*dl)->w0, (*dl)->w1, address, slot, unsigned(multiply), j.matrixOffset);
@@ -276,11 +231,7 @@ index 0000000..ad0984d
 +            fprintf(f, "\n"); fflush(f);
 +        }
 +        j.matrixAddresses[slot] = address;
-+        jfgSlotIds[slot & 15] = int(address - j.matrixOffset) / 64;
-+        if (jfgTraceVtxId()) jfg_logf("VTXID mtx slot=%u id=%d mul=%u moff=%08X\n", slot, jfgSlotIds[slot & 15], unsigned(multiply), j.matrixOffset);
 +        j.matrixIndex = slot;
-+        ++triStats.matrices;
-+        if (multiply) ++triStats.mulMatrices;
 +        static const bool traceDMA = std::getenv("JFG_TRACE_DMA") != nullptr;
 +        static uint32_t tracedMatrices = 0;
 +        static uint32_t tracedModelMatrices = 0;
@@ -304,29 +255,12 @@ index 0000000..ad0984d
 +        if (!((*dl)->w0 & 0x10000)) j.vertexCursor = 0;
 +        else if (j.billboard) j.vertexCursor = 1;
 +        const uint32_t count = (*dl)->p0(19, 5);
-+        static const bool traceVtxCmd = std::getenv("JFG_TRACE_VTXCMD") != nullptr;
-+        static uint32_t tracedVtxCmd = 0;
-+        if (traceVtxCmd && ((*dl)->w0 & 0xC000) && tracedVtxCmd < 40) {
-+            ++tracedVtxCmd;
-+            jfg_logf("JFG_VTXCMD high dst bits: w0=%08X w1=%08X count=%u dst5=%u dst7=%u len=%u\n", (*dl)->w0, (*dl)->w1,
-+                count, (*dl)->p0(9, 5), (*dl)->p0(9, 7), (*dl)->p0(0, 9));
-+        }
-+        static const uint32_t traceVoff = std::getenv("JFG_TRACE_VTXID_VOFF") ? uint32_t(std::strtoul(std::getenv("JFG_TRACE_VTXID_VOFF"), nullptr, 16)) : 0;
-+        static uint32_t tracedVoff = 0;
-+        if (traceVoff && j.vertexOffset == traceVoff && (jfgAppCalls % 50) < 3 && tracedVoff < 3000) {
-+            ++tracedVoff;
-+            jfg_logf("VTXID vtx dl=%u voff=%08X w1=%08X v=%u n=%u dst=%u slot=%u id=%d\n", jfgAppCalls, j.vertexOffset, (*dl)->w1,
-+                (*dl)->w1 / 10, count, j.vertexCursor + (*dl)->p0(9, 5), j.matrixIndex, jfgSlotIds[j.matrixIndex & 15]);
-+        }
-+        if (jfgTraceVtxId()) jfg_logf("VTXID vtx voff=%08X w1=%08X v=%u n=%u dst=%u slot=%u id=%d\n", j.vertexOffset, (*dl)->w1,
-+            (*dl)->w1 / 10, count, j.vertexCursor + (*dl)->p0(9, 5), j.matrixIndex, jfgSlotIds[j.matrixIndex & 15]);
 +        if (FILE *f = captureFile(state)) {
 +            const auto &w = state->ext.workloadQueue->workloads[state->ext.workloadQueue->writeCursor];
 +            fprintf(f, "V cmd=%08X addr=%08X base=%08X n=%u dst=%u global=%u slot=%u matrix=%08X bb=%u\n", (*dl)->w0, (*dl)->w1,
 +                j.vertexOffset, count, j.vertexCursor + (*dl)->p0(9,5), w.drawData.vertexCount(), j.matrixIndex, j.matrixAddresses[j.matrixIndex], unsigned(j.billboard));
 +        }
 +        state->rsp->setVertexJFG((*dl)->w1, count, j.vertexCursor + (*dl)->p0(9, 5));
-+        ++triStats.vtxLoads;
 +        j.vertexCursor += count;
 +    }
 +    static void triangles(State *state, DisplayList **dl) {
@@ -353,15 +287,10 @@ index 0000000..ad0984d
 +                const uint32_t st = (uint32_t(half(state, p + 4 + k * 4)) << 16) | half(state, p + 6 + k * 4);
 +                rsp->modifyVertex(indices[k], G_MWO_POINT_ST, st);
 +            }
-+            static const int cullMode = std::getenv("JFG_CULL") ? std::atoi(std::getenv("JFG_CULL")) : 0;
-+            const uint32_t cull = ((flags & 0x40) || cullMode == 1) ? 0 : (cullMode == 2) ?
-+                ((rsp->viewportStack[rsp->viewportStackSize - 1].scale.x > 0) ? rsp->cullFrontMask : (rsp->cullBothMask ^ rsp->cullFrontMask)) :
++            const uint32_t cull = (flags & 0x40) ? 0 :
 +                ((rsp->viewportStack[rsp->viewportStackSize - 1].scale.x > 0) ?
 +                    (rsp->cullBothMask ^ rsp->cullFrontMask) : rsp->cullFrontMask);
 +            rsp->modifyGeometryMode(~rsp->cullBothMask, cull);
-+            static const bool forceZ = std::getenv("JFG_FORCE_Z") != nullptr; // debug experiment: depth on for all tris
-+            if (forceZ && (state->rdp->otherMode.L & 0x30) != 0x30)
-+                state->rdp->setOtherMode(state->rdp->otherMode.H, state->rdp->otherMode.L | 0x30);
 +            state->ext.workloadQueue->workloads[state->ext.workloadQueue->writeCursor].jfgDebugDl = jfgAppCalls;
 +            rsp->drawIndexedTri(indices[0], indices[1], indices[2]);
 +            if (FILE *f = captureFile(state)) {
@@ -370,32 +299,6 @@ index 0000000..ad0984d
 +                    w.drawData.faceIndices.size()-3, state->drawCall.callIndex, rsp->jfg.vertexOffset, rsp->jfg.matrixOffset,
 +                    indices[0],indices[1],indices[2],rsp->indices[indices[0]],rsp->indices[indices[1]],rsp->indices[indices[2]],
 +                    state->rdp->otherMode.H,state->rdp->otherMode.L,rsp->geometryModeStack[rsp->geometryModeStackSize-1],flags);
-+            }
-+            static const bool traceTri = std::getenv("JFG_TRACE_TRI") != nullptr;
-+            if (traceTri) {
-+                const auto &workload = state->ext.workloadQueue->workloads[state->ext.workloadQueue->writeCursor];
-+                const auto &ps = workload.drawData.posScreen;
-+                const auto &pt = workload.drawData.posTransformed;
-+                TriStats &t = triStats;
-+                ++t.tris;
-+                if (flags & 0x40) ++t.culledFlag;
-+                bool front = true;
-+                float cx = 0.0f;
-+                for (uint32_t k = 0; k < 3; ++k) {
-+                    const uint32_t g = rsp->indices[indices[k]];
-+                    if (float(pt[g].w) <= 0.0f) front = false;
-+                    cx += float(ps[g][0]) / 3.0f;
-+                }
-+                if (front) {
-+                    ++t.allFront;
-+                    if (cx >= 160.0f) ++t.rightHalf; else ++t.leftHalf;
-+                    for (uint32_t k = 0; k < 3; ++k) {
-+                        const uint32_t g = rsp->indices[indices[k]];
-+                        t.minX = std::min(t.minX, float(ps[g][0])); t.maxX = std::max(t.maxX, float(ps[g][0]));
-+                        t.minY = std::min(t.minY, float(ps[g][1])); t.maxY = std::max(t.maxY, float(ps[g][1]));
-+                    }
-+                }
-+                else ++t.someBehind;
 +            }
 +        }
 +        rsp->jfg.vertexCursor = 0;
@@ -704,7 +607,7 @@ index 3227ab1..6671400 100644
                  swapChainValid = ext.swapChain->present(swapChainIndex, &waitSemaphore, 1);
                  presentProfiler.logAndRestart();
 diff --git a/src/hle/rt64_rsp.cpp b/src/hle/rt64_rsp.cpp
-index ee2030b..3d3fcd8 100644
+index ee2030b..847264d 100644
 --- a/src/hle/rt64_rsp.cpp
 +++ b/src/hle/rt64_rsp.cpp
 @@ -5,6 +5,8 @@
@@ -716,7 +619,7 @@ index ee2030b..3d3fcd8 100644
  
  #include "../include/rt64_extended_gbi.h"
  #include "common/rt64_common.h"
-@@ -376,6 +378,92 @@ namespace RT64 {
+@@ -376,6 +378,97 @@ namespace RT64 {
          setVertexCommon<true, sizeof(Vertex)>(rdramAddress, dstIndex, dstIndex + vtxCount);
      }
      
@@ -752,14 +655,20 @@ index ee2030b..3d3fcd8 100644
 +        // combined matrices as a camera projection is not valid. The world
 +        // transform path preserves all four components, including clip-space W.
 +        auto combined = jfg.matrices[jfg.matrixIndex];
-+        static const bool noBillboard = std::getenv("JFG_NO_BILLBOARD") != nullptr; // debug experiment
-+        if (jfg.billboard && dstIndex != 0 && !noBillboard) {
++        // Clip w depends on the position: the load belongs to the perspective 3D scene (see the aspect note below).
++        bool perspective = (std::abs(float(combined[0][3])) + std::abs(float(combined[1][3])) + std::abs(float(combined[2][3]))) > 1e-6f;
++        if (dstIndex == 0) jfg.anchorPerspective = perspective;
++        const bool billboardLoad = jfg.billboard && dstIndex != 0;
++        if (billboardLoad) {
 +            const auto &workload = state->ext.workloadQueue->workloads[state->ext.workloadQueue->writeCursor];
 +            if (!jfg.loadedVertices[0] || indices[0] >= workload.drawData.posTransformed.size()) {
 +                throw std::runtime_error("F3DJFG billboard anchor not loaded");
 +            }
 +            const auto &anchor = workload.drawData.posTransformed[indices[0]];
 +            for (uint32_t c = 0; c < 4; ++c) combined[3][c] += anchor[c];
++            // A billboard sprite is placed in clip space around its anchor (vertex 0): it belongs to the same class
++            // as the anchor's load, otherwise sprite and anchor could get different aspect handling.
++            perspective = jfg.anchorPerspective;
 +        }
 +        // Projection and widescreen aspect. The real projection is in the combined matrix, RT64's projection stays
 +        // identity. Loading that identity projection for every vertex load created one RT64 projection per load:
@@ -770,7 +679,6 @@ index ee2030b..3d3fcd8 100644
 +        // A perspective combined matrix (clip w depends on the position) belongs to the 3D scene: all such loads of a
 +        // task share one identity projection whose aspect mode is ADJUST. Other (2D) loads keep the previous
 +        // behaviour: a new AUTO projection per load.
-+        const bool perspective = (std::abs(float(combined[0][3])) + std::abs(float(combined[1][3])) + std::abs(float(combined[2][3]))) > 1e-6f;
 +        const uint8_t aspect = perspective ? uint8_t(G_EX_ASPECT_ADJUST) : uint8_t(G_EX_ASPECT_AUTO);
 +        const bool aspectChanged = (jfg.viewProjAspect != aspect);
 +        if (aspectChanged) {
@@ -810,10 +718,10 @@ index ee2030b..3d3fcd8 100644
          if ((dstIndex >= RSP_MAX_VERTICES) || ((dstIndex + vtxCount) > RSP_MAX_VERTICES)) {
              assert(false && "Vertex indices are not valid. DL is possibly corrupted.");
 diff --git a/src/hle/rt64_rsp.h b/src/hle/rt64_rsp.h
-index 61bb3b1..e8237ed 100644
+index 61bb3b1..e43cb8e 100644
 --- a/src/hle/rt64_rsp.h
 +++ b/src/hle/rt64_rsp.h
-@@ -130,6 +130,16 @@ namespace RT64 {
+@@ -130,6 +130,17 @@ namespace RT64 {
          };
  
          State *state;
@@ -826,11 +734,12 @@ index 61bb3b1..e8237ed 100644
 +            std::array<hlslpp::float4x4, 16> matrices;
 +            std::array<uint32_t, 16> matrixAddresses = {};
 +            uint8_t viewProjAspect = 0xFF; // aspect mode of the current view-projection group (0xFF = not set yet)
++            bool anchorPerspective = false; // class of the last load into vertex 0 (billboard anchor)
 +        } jfg;
          std::array<hlslpp::float4x4, RSP_MATRIX_STACK_SIZE> modelMatrixStack;
          std::array<uint32_t, RSP_MATRIX_STACK_SIZE> modelMatrixSegmentedAddressStack;
          std::array<uint32_t, RSP_MATRIX_STACK_SIZE> modelMatrixPhysicalAddressStack;
-@@ -253,6 +263,7 @@ namespace RT64 {
+@@ -253,6 +264,7 @@ namespace RT64 {
          void setModelViewProjChanged(bool changed);
          void setVertex(uint32_t address, uint32_t vtxCount, uint32_t dstIndex);
          void setVertexPD(uint32_t address, uint32_t vtxCount, uint32_t dstIndex);
@@ -838,7 +747,7 @@ index 61bb3b1..e8237ed 100644
          void setVertexEXV1(uint32_t address, uint32_t vtxCount, uint32_t dstIndex);
          void setVertexColorPD(uint32_t address);
          void setVertexSegmentV1(bool isEnabled, uint32_t vertexElement, uint32_t vertexAddress, uint32_t baseSegmentAddress);
-@@ -304,4 +315,4 @@ namespace RT64 {
+@@ -304,4 +316,4 @@ namespace RT64 {
          void setGBI(GBI *gbi);
          void setNoN(bool NoN);
      };

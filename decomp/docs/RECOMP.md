@@ -34,6 +34,9 @@ Not yet tried by a human with real mouse/keyboard; audio never listened to.
    with aspect AUTO some limb projections got the widescreen x adjustment and others (no own draws, skipped) did not.
    Fix in lib/rt64 setVertexJFG (lib-patches/rt64.patch): one shared ADJUST projection for perspective JFG draws.
    See the dated entry "sliced character models".
+   Follow-up 2026-10-16: checked in 4:3 / 16:9 / 21:9 (one scale per model and viewport), HUD 160x160 viewport
+   identified, 64x64 pass unchanged, root-cause experiments removed, plume readback fix as lib-patches/plume.patch.
+   Open: split screen not reachable (one pad), pre-existing 4:3-wide water overlay seam in widescreen.
 2. Rare freeze during the Goldwood landing cutscene (~84-99 s after start, process alive, frame frozen);
    0/9 and 1/5 runs with recent builds. Tool ready: tools\stackdump\hang_watch.ps1. See entry 03:52.
 3. Input lag: ~33-50 ms is the original game loop (input read -> shown next game frame at 20-30 fps); the port adds
@@ -1399,3 +1402,90 @@ So the first wrong value is the GPU x of part of Juno's vertices: some limbs got
 | Title screen (normal start, 33 s) | Vela (girl model) coherent; 4:3 frame with blurred sides unchanged from the baseline |
 | test_menu_free_start fast x1, normal x1 | PASS |
 Not checked: other levels, multiplayer split screen, enemies; the 160x160 square-viewport pass was not identified.
+
+## 2026-10-16 (follow-up): mesh fix production check - patches, aspect modes, viewports, diagnostics (Claude)
+Labels: [Code] source; [Trace] measured (JFG_CAPTURE_DL capture + tools/check_jfg_capture.py, screenshots of the run's
+PID); [Vermutung] assumption. Root cause of the sliced models is NOT re-examined here (see the previous entry).
+All runs: RUN_VALID=1, max_instances_seen=1, process alive to the end, saves unchanged (names + SHA256), JFG_NO_AUDIO=1
+(this PC currently shows the WASAPI "No audio device" box without it; environment, not a code change).
+
+### Clean-checkout reproducibility  [Trace]
+- lib-patches/rt64.patch regenerated (`git -C lib/rt64 diff HEAD -- . ':(exclude)src/contrib/plume'`). Applied in a fresh
+  worktree of the pinned rt64 6f1c2d9: applies cleanly and every patched file is byte-identical (ignoring CR) to the
+  working tree that was built and tested.
+- NEW lib-patches/plume.patch (pinned plume d890ac8, applies cleanly, equals the local diff). Separate from the mesh fix:
+  plume_d3d12.cpp `copyTextureRegion` called `setSamplePositions(dstLocation.texture)`, which is null for a
+  texture -> buffer (readback) copy. Only the JFG_CAPTURE_DL color-target readback uses such a copy; without the patch a
+  capture run crashed (0xC0000005 in plume::D3D12CommandList::setSamplePositions, map file). Fix: use the source texture
+  when the destination is a buffer. Normal rendering does not use this path. README step 2 lists the new patch.
+- Other submodules (N64ModernRuntime ca568b6, N64Recomp 2b6f056, RecompFrontend d0d90ba): local diff == patch; no other
+  local RT64/plume/runtime change is needed.
+
+### Billboard hardening  [Code]
+setVertexJFG: a billboard sprite load (vertex 0 = anchor, sprite placed in clip space around it) now takes the
+perspective/2D class of its anchor load (`jfg.anchorPerspective`) instead of classifying its own combined matrix, so
+sprite and anchor can never get different aspect handling. [Trace] the 180 3D billboard corners (base 00337670) are one
+scale in every mode below; the HUD billboards (2D anchor, viewport 160/160) stay unadjusted, as before.
+
+### Aspect modes (tools/test_skeletal_mesh.ps1 -Aspect / -WindowSize, capture DL 761)  [Trace]
+| Mode | Window (client) | All 3D models in the main viewport (level, Juno 00301388, 0030D658, 002D2F18, billboards) | HUD viewport 160/160 |
+|---|---|---|---|
+| ar_option Expand, 16:9 | 1600x900 | one x scale 0.75 = (4/3)/(16/9) | 1.0 |
+| ar_option Original (4:3) | 1600x900 | one x scale 1.0 (pillarboxed) | 1.0 |
+| Expand, 21:9 | 1890x810 | one x scale 0.571 = (4/3)/(21/9) | 1.0 |
+y and w equal CPU vs GPU for every corner in all modes. Screenshots (jump 1 s, turn 2 s, run 5 s, side/back 13 s):
+Juno coherent in all three modes, reflection in the pool coherent, HUD clamped to the 16:9 area in 21:9 (hr_option
+Clamp16x9, intended). test_skeletal_mesh.ps1 restores graphics.json (SHA256 checked) after an -Aspect run.
+Note: run_capture.ps1 -WindowSize uses physical pixels (DPI aware); the first try without DPI awareness got 1282x700.
+
+### Viewports / split screen
+- [Trace] DL 761 has three viewports: main 160/120 (scale x/y), 64x64 off-screen pass (DL 760, viewport 32/32,
+  x scale 1.0), HUD 160/160. Each keeps one scale per model; the checker groups by (model, viewport).
+- Split screen NOT reachable: [Code] main.cpp `get_connected_device_info` reports only port 0 as connected in
+  single-player mode, and JFG_INPUT_SCRIPT drives pad 1 only; multiplayer needs at least two connected pads and menu
+  input on them. Would need a harness extension (pad 2..4 scripting + multi-player mode), not done.
+- [Code] a viewport change still creates a new projection (setVertexCommon), and the aspect class is per load, so two
+  viewports cannot share a projection. [Vermutung] risk for a 4-way split: perspective loads use ADJUST unconditionally,
+  so a half-width quadrant viewport gets x * (4/3)/(window aspect) like the full screen; whether RT64 also widens such a
+  viewport correctly under Expand is untested.
+
+### The 160x160 viewport  [Trace]
+Identified: the last triangles of the main display list (draws 2823-2886 in DL 761), orthographic DMA matrices
+(constant w = 160), otherModeL 00504240/00104240/001041C8, flag 0x40, no Z; screen extents x 19-85, y 13-76 (weapon /
+ammo box, top left) and x 24-61, y 152-227 (health ring, bottom left). = 2D HUD. Unadjusted (1.0) as before the fix,
+correct; nothing changed.
+
+### Off-screen passes and reflections  [Trace]
+- 64x64 pass (DL 760, viewport 32/32): x scale 1.0 for all models (RT64 adjusts only the main framebuffer); not touched.
+- Pool reflection (Juno mirrored in the water) coherent in all modes (screenshots).
+- Pre-existing, NOT caused by the fix: in widescreen a lighter water overlay ends at the 4:3 borders (16:9: x about
+  210 and 1410 of 1600; 21:9: about 415 and 1495 of 1890). The same seam is in a screenshot from before the mesh fix
+  (runlogs shot_1015_202407831_20.png). No F3DJFG triangle group in the main viewport has an unadjusted scale, so
+  [Vermutung] it is an RDP rectangle / framebuffer effect that covers the original 320 px width. Open render risk,
+  not changed.
+
+### Other models
+- [Trace] Juno (00301388), 0030D658 and 002D2F18 (further models of the start area), level, billboards: one
+  scale each. Magnus: DL 681 (previous entry). Vela on the title screen: coherent (normal start, 35 s screenshot).
+- Not reached: enemies, NPCs other than Magnus, other levels, Vela/Lupus as player (would need new input routes or
+  state set-up; no new RAM hacks were made).
+
+### Diagnostics clean-up  [Code]
+Kept (env-gated, default off): JFG_CAPTURE_DL (capture), JFG_TRACE_DMA, JFG_DUMP_DL, JFG_TRACE_APPDL, JFG_DUMP_UCODE.
+Removed (root-cause experiments only): JFG_FORCE_Z (forced Z on every triangle - changes rendering, never a fix),
+JFG_CULL (cull-mode experiment; the default cull rule is unchanged), JFG_TRACE_TRI (triangle statistics),
+JFG_TRACE_VTXID / JFG_TRACE_VTXID_VOFF, JFG_TRACE_VTXCMD, JFG_TRACE_MTXRANGE, JFG_TRACE_MATRIX_PAIR_AT and its
+CPU-side pair capture in src/main/main.cpp (jfg_capture_matrix_pair / jfg_compare_decoded_matrix), JFG_NO_BILLBOARD.
+
+### Test tooling
+- tools/test_skeletal_mesh.ps1: PASS now also requires all four screenshots of this run (stamp of the run's own log)
+  and the capture files; new -Aspect Expand|Original and -WindowSize W,H (no duplicate scripts).
+- tools/run_capture.ps1: new -WindowSize W,H (resizes the bound PID's window after launch, prints WINDOW_RESIZE=1).
+
+### Regression (final build)  [Trace]
+| Test | Result |
+|---|---|
+| test_skeletal_mesh 30 Hz x3 (16:9) | PASS, Juno one scale 0.75 |
+| test_skeletal_mesh 60 Hz x1 (-Mode60 -Dl 1481) | PASS |
+| test_skeletal_mesh -Aspect Original / -WindowSize 1890,810 | PASS (scales 1.0 / 0.571) |
+| test_menu_free_start fast / -Normal | PASS / PASS (0x5C landed, title 0x15D) |

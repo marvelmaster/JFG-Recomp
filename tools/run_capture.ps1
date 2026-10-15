@@ -9,7 +9,8 @@
 # binds to the PID of the game process it started (parent = its cmd.exe), takes screenshots of that PID only,
 # samples the instance count during the run, and stops only that PID. Output ends with "RUN_PID=<pid>" and
 # "RUN_VALID=1" or "RUN_VALID=0 (<reason>)". Exit code: 0 valid, 3 refused (instance running), 4 no game process, 5 invalid.
-param([int]$Seconds = 60, [string]$Shots = "20,40,60", [string]$ExtraArgs = "", [string]$Env = "", [switch]$NoConsole, [switch]$ScriptTime)
+# -WindowSize "W,H": resize the game window (client area of the bound PID) right after launch, physical pixels, e.g. "1890,810" for 21:9.
+param([int]$Seconds = 60, [string]$Shots = "20,40,60", [string]$ExtraArgs = "", [string]$Env = "", [switch]$NoConsole, [switch]$ScriptTime, [string]$WindowSize = "")
 foreach ($kv in ($Env -split ";" | Where-Object { $_ })) { $k, $v = $kv -split "=", 2; Set-Item "env:$k" $v }
 $root = Split-Path -Parent $PSScriptRoot
 $run = Join-Path $root "build-cmake\run-jfg"
@@ -54,6 +55,37 @@ function Sample-Instances {
     if ($n -gt 1) { $script:duplicate = $true }
 }
 
+if ($WindowSize) {
+    Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class RunWin {
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int w, int hh, uint f);
+    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+}
+"@
+    [void][RunWin]::SetProcessDPIAware()   # sizes in physical pixels
+    $w, $h = $WindowSize -split "," | ForEach-Object { [int]$_ }
+    $hwnd = [IntPtr]::Zero
+    for ($i = 0; $i -lt 300 -and $hwnd -eq [IntPtr]::Zero; $i++) {
+        $p = Get-Process -Id $gamePid -ErrorAction SilentlyContinue
+        if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero) { $hwnd = $p.MainWindowHandle } else { Start-Sleep -Milliseconds 100 }
+    }
+    if ($hwnd -eq [IntPtr]::Zero) { "WINDOW_RESIZE=0 (no window)" }
+    else {
+        $wr = New-Object RunWin+RECT; $cr = New-Object RunWin+RECT
+        [void][RunWin]::GetWindowRect($hwnd, [ref]$wr); [void][RunWin]::GetClientRect($hwnd, [ref]$cr)
+        # Window size = client size + frame; SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE.
+        $fw = ($wr.R - $wr.L) - ($cr.R - $cr.L); $fh = ($wr.B - $wr.T) - ($cr.B - $cr.T)
+        [void][RunWin]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, $w + $fw, $h + $fh, 0x16)
+        Start-Sleep -Milliseconds 300
+        [void][RunWin]::GetClientRect($hwnd, [ref]$cr)
+        "WINDOW_RESIZE=1 client=$($cr.R - $cr.L)x$($cr.B - $cr.T)"
+    }
+}
 $t0 = (Get-Date).AddSeconds(-2)
 if ($ScriptTime) {
     $trace = Join-Path $run "jfg_trace.log"
