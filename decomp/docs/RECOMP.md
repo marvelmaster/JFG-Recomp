@@ -962,3 +962,71 @@ Labels: [Measured] = observed with PID/time; [Code] = read in the scripts; [Not 
 - No new timing or reproducibility measurement is accepted until repeated with run_capture RUN_VALID=1.
 - Norton activity log not inspected (user action needed if Norton is suspected).
 - Who started the second process at 17:29:09.57 is not identified (no process creation audit).
+
+## 2026-10-15 (evening, Norton off): clean baseline, 0x16D resolved, menu-free start (Claude)
+Labels: [Code] decomp source / generated code / ROM bytes; [Trace] measured in a run with RUN_VALID=1 and
+max_instances_seen=1; [Vermutung] not proven. All runs: exe built 19:58:35 (forced relink) or later, Norton disabled
+by the user for about one hour (not configured by us).
+
+### 1. Norton-free baseline (harness tools/run_capture.ps1 plus an extra 250 ms process watcher)  [Trace]
+| Run | Exe | Env | RUN_PID / parent cmd | max_instances_seen | Distinct PIDs (watcher) | RUN_VALID |
+|---|---|---|---|---|---|---|
+| A 19:58:52 | fresh link 19:58:35 (first start of this exe) | JFG_NO_AUDIO=1 | 6416 / 42784 | 1 | 1 | 1 |
+| B 19:59:45 | same exe | default audio | 42780 / 13372 | 1 | 1 | 1 |
+| C 20:00:46 | same exe | test_debug_start (130 s) | 21780 / 39268 | 1 | 1 | 1 |
+- No second process, no restart, process stable for the whole window in all three runs. The first start of a freshly
+  linked exe behaved like the second one. With Norton off the double start/restart does not occur. The user observed
+  the stop-and-restart with Norton on, so the earlier double starts are attributed to the Norton path (user observation +
+  these runs; Norton itself was not inspected).
+- Default audio works again in this environment (run B: no WASAPI modal box, heartbeat to the end, title screen at 30 s).
+
+### 2. Repeated measurements with the PID harness  [Trace]
+- `--jfg-level goldwood` diagnostic (tools/test_debug_start.ps1, run C): PASS. Redirect at script ms 63369, level 0x5D
+  char 1, first player position 96863 ms, walk 563.1 units, 0 save files changed, runlogs/debug_start_goldwood_1.*.
+- Default route with traces (JFG_TRACE_LEVEL/TRAP/GAMEPLAY, no redirect, run 20:03:33, PID 25784): RUN_VALID=1. Level
+  requests 0x0 (a3 0), 0x0 (a3 2), 0x15D (a3 3), 0x0 (a3 24), 0x7F (a3 5), 0x16D x3 (char 1, a3 16), 0x5D, 0x5C (char 1,
+  a3 16). Save hashes before/after identical. Trace: runlogs/route_traptgt.trace.log (not committed).
+
+### 3. Trampoline target trace (new, JFG_TRACE_TRAP=1)  [Code]
+- Hook before `jr $t8` at 0x800546AC in TrapDanglingJump (decomp/recomp/jfg.us.toml; the line is also inserted by hand
+  in the local RecompiledFuncs/funcs_17.c, regeneration NOT run). Logs t5 (jal site), t7 (index into overlayRomTable),
+  t9 = overlayRomTable[t7] = (overlay << 20) | offset, t8 (target), and the overlay header (base, ROM address).
+- Overlay number in t9 = "Module N" in jfg_us_syms_full.txt. Proof: every offset seen matches a module symbol EXACTLY,
+  e.g. 26+0x2F8 partInitLib, 35+0 fontInit, 57+0xC0 frontRarepage, 63+0x140 frontStartScreen, 42+0x178 frontKeyboard,
+  42+0x2C80 frontKeyboardGetTiltList, 47+0x206C animseqInitCaptions, 12+0x1870 frontMenuFrameTrackDrawingOn,
+  12+0xA64 frontMenuFrameDraw, 58+0x134 frontCharSelect, 58+0x618 frontTeleporterTick, 41+0x8B4 frontCharBadge.
+- Correction of the previous entry: ROM 0x01F782B0 is overlay 58 (not 57) and ROM 0x01F5F0C8 is overlay 42 (not 41).
+  The earlier index was off by one. With the ROM table entry the mapping no longer depends on RAM addresses.
+
+### 4. 0x16D resolved  [Trace + Code + ROM]
+- Trace sequence before every 0x16D request: frontUpdate jal 0x80058B68 -> 58+0x134 frontCharSelect; inside it
+  jal 0x803434EC (58+0x22C) -> 41+0x8B4 frontCharBadge(0, 0, 6) (overlay_58.c:141 `frontCharBadge(0, 0, arg0)`);
+  then 58+0x618 frontTeleporterTick; then mainChangeLevel(0x16D, 1, 0, 0x10). So the "intermediate target" at
+  0x803434EC is frontCharBadge (a badge draw/update) and does NOT change the level.
+- The level request itself is the end of frontCharSelect (overlay_58.c:161-179): mainSetMode(0), region check,
+  mainValidateRestart, mainChangeLevel(record+0x74 >> 5, char, record+0x74 & 0x1F, 0x10, 1, 0), record =
+  game + char*0x76 + 0x15C. Mode 0x10 and char 1 match the trace.
+- Where 0x16D comes from: mainSetDefaultCharacter writes the start level of each character from the s16 table at
+  0x800A3314 (ROM 0xA3F14) into record+0x74 (main.c:1825). ROM bytes: 0x42, 0x16D, 0x3D, 0x42 for chars 0-3. So 0x16D
+  "Boy Select Sq" is char 1's default start level. Char 1 = Juno (screenshot: "Welcome, Juno!" in Goldwood).
+- Reads/writes: frontCharSelect reads the character record (level/region at +0x74, char type at +4) of the game struct
+  and writes them back after mainValidateRestart (no change for 0x16D); sets mainGameMode = 0 (mainSetMode).
+- The stale ra in the level trace (ra = 0x803434F4 for 0x16D) is explained: generated code does not write ra for direct
+  calls, so ctx->r31 still holds the trampoline's return address. Return addresses in traces are therefore only
+  meaningful right after a trampoline call.
+
+### 5. trackInit and player setup  [Trace + Code]
+- levelInit (0x80043E3C) calls the trampoline at 0x8004406C (generated funcs_11.c); objSetupPlayers is entered with
+  ra = 0x80044074 = that call + 8. trackInit (module 24, overlay_24.c:47) calls objSetupPlayers(arg2). So the chain is
+  func_80046070 -> levelInit -> (trampoline) trackInit -> objSetupPlayers(spawn). Spawn id was 0 for 0x16D, 0x5D, 0x5C.
+- New entry traces (JFG_TRACE_LEVEL=1): JFG_LEVELINIT (level, a1, char, anim group, requested region/mode) and
+  JFG_SETUPPLAYERS (spawn id). Hooks in jfg.us.toml + by hand in funcs_11.c / funcs_1.c (regeneration NOT run).
+- Camera/HUD init order inside trackInit: camSetMode(numCameras-1) before objLoadObjList; HUD not traced. [Code]
+
+### 6. Command 0x7A (0x5D -> 0x5C)  [Code + Trace]
+- anim.c:1847-1874: level = cmd[2] & 0xFFF (0xFFF = game byte 1), region = cmd[2] >> 12, char = (cmdWord >> 4 & 0xF) - 1
+  or the current char, anim group = cmdWord & 0xF, mode = frontGetMode() (0x17 for level 0x168). So the next level is a
+  literal in the level's cutscene script: the script of 0x16D contains 0x7A -> 0x5D, the script of 0x5D 0x7A -> 0x5C.
+  Trace: anim group 0, region 0, mode 16 for both. Before each 0x7A level change the trampoline calls module 111 +0
+  (jal 0x80077B0C; the module's only symbol name, osCartTest3_6105, is not meaningful).
+- Not done: the script offset / sequence id of the command and the condition that runs it (command list source).

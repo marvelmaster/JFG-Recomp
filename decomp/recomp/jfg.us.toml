@@ -125,3 +125,18 @@ text = "{ extern int jfg_60hz_enabled(void); if (jfg_60hz_enabled()) ctx->r1 = 0
 func = "viFrameSync"
 before_vram = 0x80055104
 text = "{ extern void jfg_frame_sync_limit(uint8_t*, recomp_context*); jfg_frame_sync_limit(rdram, ctx); }"
+
+[[patches.hook]]
+func = "TrapDanglingJump"
+before_vram = 0x800546AC
+text = "{ extern void jfg_trap_target(uint8_t*, recomp_context*); jfg_trap_target(rdram, ctx); }"
+
+[[patches.hook]]
+func = "levelInit"
+before_vram = 0x80043E3C
+text = "{ extern void jfg_trace_level_init(uint8_t*, recomp_context*); jfg_trace_level_init(rdram, ctx); }"
+
+[[patches.hook]]
+func = "objSetupPlayers"
+before_vram = 0x8000561C
+text = "{ extern void jfg_trace_setup_players(uint8_t*, recomp_context*); jfg_trace_setup_players(rdram, ctx); }"

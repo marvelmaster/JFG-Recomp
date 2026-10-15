@@ -745,6 +745,10 @@ extern "C" void jfg_gameplay_tick(uint8_t* rdram, recomp_context* ctx) {
 // call passes through unchanged. Without the option nothing is changed.
 static int jfg_debug_level = -1;
 static int jfg_debug_char = -1;
+static int jfg_test_start_char = -1; // --jfg-test-start goldwood: character for the menu-free start
+extern "C" void mainGetGame(uint8_t*, recomp_context*);        // generated (RecompiledFuncs), 0x80047C0C
+extern "C" void mainSetDefaultGame(uint8_t*, recomp_context*); // 0x800476F0
+extern "C" void mainSetMode(uint8_t*, recomp_context*);        // 0x80047580
 extern "C" int jfg_overlay_at(uint32_t addr, uint32_t* rom_out, uint32_t* base_out); // rom_decompression.cpp
 extern "C" void jfg_change_level(uint8_t* rdram, recomp_context* ctx) {
     static const bool trace = std::getenv("JFG_TRACE_LEVEL") != nullptr;
@@ -776,6 +780,42 @@ extern "C" void jfg_change_level(uint8_t* rdram, recomp_context* ctx) {
         ctx->r4 = (gpr)(int32_t)jfg_debug_level;
         ctx->r5 = (gpr)(int32_t)jfg_debug_char;
     }
+    // --jfg-test-start goldwood (menu-free). Trigger: the first title-page request (level 0x15D, mode 3). It comes from
+    // the Rare logo page without any input (JFG_TRACE_LEVEL/JFG_TRACE_TRAP, RECOMP.md "menu-free start").
+    // Instead of the title page, do what a new game plus character select do, with the game's own functions:
+    //   mainSetDefaultGame(game): default game struct; per character the start level from the ROM table at
+    //     0x800A3314 (char 1 = 0x16D "Boy Select Sq") into record +0x74 (decomp main.c:1629/1817).
+    //   mainSetMode(0): as frontCharSelect before its level change (overlay_58.c:164).
+    //   mainChangeLevel(record level, char, record region, 0x10, 1, 0): the frontCharSelect request (overlay_58.c:179).
+    // The level script then continues as in a normal game (0x16D -> 0x5D -> 0x5C via animseq command 0x7A).
+    // No save is read or written (mainSaveGame is not called). Arguments 5 and 6 (stack) are 1 and 0 in both calls.
+    static bool test_started = false;
+    if (jfg_test_start_char >= 0 && !test_started && level == 0x15D) {
+        test_started = true;
+        const recomp_context saved = *ctx;
+        mainGetGame(rdram, ctx);
+        const gpr game = ctx->r2;
+        if ((uint32_t)game < 0x80000000u || (uint32_t)game >= 0x80800000u) {
+            *ctx = saved;
+            fprintf(stderr, "[JFG] --jfg-test-start: game struct pointer 0x%08X invalid, start NOT changed.\n", (uint32_t)game);
+            return;
+        }
+        ctx->r4 = game;
+        mainSetDefaultGame(rdram, ctx);
+        ctx->r4 = 0;
+        mainSetMode(rdram, ctx);
+        const gpr record = game + jfg_test_start_char * 0x76 + 0x15C;
+        const uint32_t level_region = (uint16_t)MEM_HU(0x74, record);
+        *ctx = saved;
+        ctx->r4 = (gpr)(int32_t)(level_region >> 5);
+        ctx->r5 = (gpr)jfg_test_start_char;
+        ctx->r6 = (gpr)(int32_t)(level_region & 0x1F);
+        ctx->r7 = 0x10;
+        fprintf(stderr, "[JFG] --jfg-test-start: new default game, char %d, level 0x%X region %d (instead of title 0x15D) at %llu ms.\n",
+            jfg_test_start_char, level_region >> 5, level_region & 0x1F, (unsigned long long)SDL_GetTicks64());
+        if (trace) jfg_logf("JFG_TESTSTART game=0x%08X char=%d level=0x%X region=%d\n", (uint32_t)game, jfg_test_start_char,
+            level_region >> 5, level_region & 0x1F);
+    }
 }
 
 // Trace at the entry of TrapDanglingJump (0x80054530, the game's overlay trampoline). It tail-jumps into the target
@@ -793,6 +833,44 @@ extern "C" void jfg_trap_trace(uint8_t* rdram, recomp_context* ctx) {
         jfg_logf("JFG_TRAP ra=0x%08X jal=0x%08X a0=0x%08X a1=0x%08X a2=0x%08X a3=0x%08X overlay=none\n",
             ra, jal, (uint32_t)ctx->r4, (uint32_t)ctx->r5, (uint32_t)ctx->r6, (uint32_t)ctx->r7);
     }
+}
+
+// Trace at the tail jump of TrapDanglingJump ("jr $t8" at 0x800546AC, generated code funcs_17.c): the overlay is loaded
+// and t8 is the resolved target. t5 = the jal that called the trampoline, t7 = index into overlayRomTable (from the
+// relocation entry), t9 = overlayRomTable[t7] = (overlay index << 20) | offset in that overlay. The overlay header
+// (overlayTable at *0x800FEAA0, 32 bytes each, +4 = ROM address) gives the ROM address of the target overlay, which
+// maps it to a decomp overlay without guessing. JFG_TRACE_TRAP=1 only.
+extern "C" void jfg_trap_target(uint8_t* rdram, recomp_context* ctx) {
+    static const bool trace = std::getenv("JFG_TRACE_TRAP") != nullptr;
+    if (!trace) return;
+    const uint32_t t9 = (uint32_t)ctx->r25;
+    const uint32_t ovl = t9 >> 20;
+    const gpr header = (gpr)(int32_t)((uint32_t)MEM_W(0, (gpr)(int32_t)0x800FEAA0u) + ovl * 0x20);
+    jfg_logf("JFG_TRAPTGT jal=0x%08X func_index=%u entry=0x%08X ovl=%u off=0x%X target=0x%08X ovl_base=0x%08X ovl_rom=0x%08X a0=0x%08X a1=0x%08X a2=0x%08X a3=0x%08X\n",
+        (uint32_t)ctx->r13, (uint32_t)ctx->r15, t9, ovl, t9 & 0xFFFFF, (uint32_t)ctx->r24,
+        (uint32_t)MEM_W(0, header), (uint32_t)MEM_W(4, header),
+        (uint32_t)ctx->r4, (uint32_t)ctx->r5, (uint32_t)ctx->r6, (uint32_t)ctx->r7);
+}
+
+// Entry traces of the level loader (JFG_TRACE_LEVEL=1 only). levelInit (0x80043E3C) is called by func_80046070 with
+// (D_800A323C level, D_800A3244, D_800A3240 char, D_800A3248 anim group) (decomp main.c:1530). objSetupPlayers
+// (0x8000561C) is called by overlay 24 trackInit with the spawn id of the level (decomp objects.c:901).
+static uint64_t jfg_trace_ms() {
+    const uint64_t now = SDL_GetTicks64();
+    return jfg_script_begin_ms ? now - jfg_script_begin_ms : 0;
+}
+extern "C" void jfg_trace_level_init(uint8_t* rdram, recomp_context* ctx) {
+    static const bool trace = std::getenv("JFG_TRACE_LEVEL") != nullptr;
+    if (!trace) return;
+    jfg_logf("JFG_LEVELINIT ms=%llu level=0x%X a1=%d char=%d animgroup=%d region_req=%d mode_req=%d ra=0x%08X\n",
+        (unsigned long long)jfg_trace_ms(), (uint32_t)ctx->r4, (int32_t)ctx->r5, (int32_t)ctx->r6, (int32_t)ctx->r7,
+        (int32_t)MEM_H(0, (gpr)(int32_t)0x800A3268), (int32_t)MEM_H(0, (gpr)(int32_t)0x800A3264), (uint32_t)ctx->r31);
+}
+extern "C" void jfg_trace_setup_players(uint8_t* rdram, recomp_context* ctx) {
+    static const bool trace = std::getenv("JFG_TRACE_LEVEL") != nullptr;
+    if (!trace) return;
+    jfg_logf("JFG_SETUPPLAYERS ms=%llu spawn=%d ra=0x%08X\n",
+        (unsigned long long)jfg_trace_ms(), (int32_t)ctx->r4, (uint32_t)ctx->r31);
 }
 
 // Adaptive VI state of gameVi.c (viFrameRateReset / viFrameSync), verified against RecompiledFuncs:
@@ -1244,9 +1322,19 @@ int main(int argc, char** argv) {
                 return EXIT_FAILURE;
             }
         }
+        if (strcmp(argv[i], "--jfg-test-start") == 0) {
+            const char* name = (i + 1 < argc) ? argv[++i] : "";
+            if (strcmp(name, "goldwood") == 0) {
+                // Char 1 (Juno): the character the verified route selects; its default start level is 0x16D.
+                jfg_test_start_char = 1;
+            } else {
+                fprintf(stderr, "[JFG] Unknown --jfg-test-start '%s'. Supported: goldwood. Nothing started.\n", name);
+                return EXIT_FAILURE;
+            }
+            continue;
+        }
         // Not implemented yet: refuse instead of silently ignoring the flag (exit code 2).
-        if (strcmp(argv[i], "--jfg-skip-intro") == 0 || strcmp(argv[i], "--jfg-skip-cutscenes") == 0 ||
-            strcmp(argv[i], "--jfg-test-start") == 0) {
+        if (strcmp(argv[i], "--jfg-skip-intro") == 0 || strcmp(argv[i], "--jfg-skip-cutscenes") == 0) {
             fprintf(stderr, "[JFG] %s is not implemented yet. Nothing started.\n", argv[i]);
             return 2;
         }
@@ -1254,6 +1342,10 @@ int main(int argc, char** argv) {
             jfg_auto_start = true;
             jfg_test_start_button = true;
         }
+    }
+    if (jfg_test_start_char >= 0 && jfg_debug_level >= 0) {
+        fprintf(stderr, "[JFG] --jfg-test-start and --jfg-level cannot be combined. Nothing started.\n");
+        return EXIT_FAILURE;
     }
     (void)argc;
     (void)argv;
