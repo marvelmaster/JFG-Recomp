@@ -27,6 +27,27 @@ stubs = [
     "D_8009F3D0_9FFD0",  # hand-written, negative stack offsets
 ]
 
+# o16 boyControl gravity and displacement operands, verified against generated MIPS.
+[[patches.hook]]
+func = "func_overlay_16_01005BB8_1F23BD0"
+before_vram = 0x82005C00
+text = "{ extern void jfg_vertical_probe(uint8_t*, recomp_context*, int); jfg_vertical_probe(rdram, ctx, 0); }"
+
+[[patches.hook]]
+func = "func_overlay_16_01005BB8_1F23BD0"
+before_vram = 0x82005F48
+text = "{ extern void jfg_vertical_probe(uint8_t*, recomp_context*, int); jfg_vertical_probe(rdram, ctx, 1); }"
+
+[[patches.hook]]
+func = "func_overlay_16_01005BB8_1F23BD0"
+before_vram = 0x82005F4C
+text = "{ extern void jfg_vertical_probe(uint8_t*, recomp_context*, int); jfg_vertical_probe(rdram, ctx, 2); }"
+
+[[patches.hook]]
+func = "func_overlay_16_01005BB8_1F23BD0"
+before_vram = 0x82005FFC
+text = "{ extern void jfg_vertical_probe(uint8_t*, recomp_context*, int); jfg_vertical_probe(rdram, ctx, 3); }"
+
 # Tell the runtime where the game's own linker (src/runLink.c) put an overlay.
 # runlinkDownloadCode: right before `jal osInvalICache` s8 = OverlayHeader* (VramBase, RomAddress, TextSize, DataSize).
 [[patches.hook]]

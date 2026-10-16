@@ -1,5 +1,28 @@
 # AI handoff (ChatGPT planner <-> Codex implementer)
 
+## Active follow-up — 2026-10-16 02:18
+
+User superseded older tasks: only Experimental 60 Hz Jump/Gravity, starting at `904acb2`.
+Mesh is accepted; do not reopen mesh/water seam/splitscreen. Five baseline runs per mode passed
+with one process and unchanged saves. Apex 30 Hz: 55.19995/63.19995; 60 Hz: 67.15017.
+Seven-overlay instruction audit: `docs/60hz_vertical_audit.md`. o16-only constant-gravity
+airborne correction implemented through four TOML hooks (5C00,5F48,5F4C,5FFC).
+Important discovery: post-collision velocity reconstruction feeds dy back into velocity;
+preserve true velocity only for verified unimpeded corrected steps, before original collision zeros.
+Build exit=0, regular generator used. Post-fix five runs per mode valid/single instance/saves unchanged.
+30 Hz apex55.19995/63.19995, same-phase original Y unchanged exactly. 60 Hz apex63.32502,
+normally airtime550–551ms (one delayed567ms). Matched launch8 trajectory error <=0.00011444 units;
+landing phase34VI in both modes. Float32 model reproduces free flight exactly.
+Hold6/launch7.5 and hold8/launch8 confirmed by traces, explaining original 30-Hz classes.
+Local baseline/probe/trial/final traces: runlogs/jump_baseline_904acb2, jump_probe_baseline,
+jump_trial_o16, jump_fixed_o16. New analyzer: tools/analyze_jump.py.
+Remaining: other six overlays, fall-from-edge x2/mode, long/short hold, water/jet/knockback,
+enemies/projectiles/particles, detailed animation/cutscene/audio/long-run regressions.
+Simple fall begins before state3; current conservative guard does NOT cover that initial phase.
+Experimental/default OFF remains required. Mesh/water-seam/splitscreen code unchanged.
+Additional regression: both mode-switch directions including midair match the model exactly;
+60Hz hold6/launch7.5 apex55.20002/landing32VI. Mesh capture checker, fast start and normal title PASS.
+
 This file is the message board between the **planner** (ChatGPT with @GitHub, reads the repo) and the
 **implementer** (Codex, works locally in `F:\SelfmadeTools\JFG_Recomp\JFGRecomp` with the ROM).
 GitHub is the only connection between them, so everything that the other side must know goes here.

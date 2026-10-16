@@ -750,6 +750,7 @@ extern "C" void jfg_sched_retrace_deferred(uint8_t* rdram, recomp_context* ctx) 
 
 // Loop timing for JFG_TRACE_LOOP=1 (steady clock, microseconds). A = joyRead -> viFrameSync entry (game logic and
 // display list build). B = viFrameSync entry -> next joyRead (sync, swap, retrace waits and the short loop tail).
+static uint64_t jfg_gameplay_frame = 0;
 static double jfg_loop_last_joy_us = 0.0, jfg_loop_last_vi_us = 0.0;
 static double jfg_loop_now_us() {
     return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -788,10 +789,10 @@ extern "C" void jfg_gameplay_tick(uint8_t* rdram, recomp_context* ctx) {
     }
     static const bool trace = std::getenv("JFG_TRACE_GAMEPLAY") != nullptr;
     if (!trace) return;
-    static uint64_t frame_number = 0;
+    const uint64_t frame_number = ++jfg_gameplay_frame;
     const uint64_t now = SDL_GetTicks64();
     jfg_logf("JFG_GAMEPLAY frame=%llu ms=%llu on=%d delta=%d time=%d\n",
-        (unsigned long long)++frame_number,
+        (unsigned long long)frame_number,
         (unsigned long long)(jfg_script_begin_ms ? now - jfg_script_begin_ms : 0), enabled,
         int(ctx->r5), int(MEM_W(0, (gpr)(int32_t)0x800FD748)));
     // Same US-ROM globals used by objGetPlayerNo (0x8000E4D0).
@@ -805,6 +806,62 @@ extern "C" void jfg_gameplay_tick(uint8_t* rdram, recomp_context* ctx) {
         jfg_logf("JFG_PLAYER frame=%llu xyz=%.5f,%.5f,%.5f\n",
             (unsigned long long)frame_number, pos[0], pos[1], pos[2]);
     }
+}
+
+// o16 instruction-level probes and the constant-gravity airborne integration.
+// The original reconstructs velocity from displacement after collision handling;
+// undoing that feedback is essential when adjusting only the integration phase.
+struct JfgVerticalStep {
+    gpr obj = 0, state = 0, sp = 0;
+    float velocity = 0, decrement = 0, y = 0, expected_y = 0;
+    bool eligible = false, applied = false;
+};
+static thread_local JfgVerticalStep jfg_vertical_step;
+extern "C" void jfg_vertical_probe(uint8_t* rdram, recomp_context* ctx, int site) {
+    static const bool trace = std::getenv("JFG_TRACE_VERTICAL") != nullptr;
+    if (!trace && !jfg_60hz_enabled()) return;
+    const gpr obj = ctx->r17, state = ctx->r16;
+    auto read_float = [&](int off, gpr base) { uint32_t bits = MEM_W(off, base); float f; memcpy(&f, &bits, 4); return f; };
+    auto& step = jfg_vertical_step;
+    if (site == 0) {
+        step = {};
+        step.obj = obj; step.state = state; step.sp = ctx->r29;
+        step.y = read_float(0x10, obj);
+        step.decrement = ctx->f4.fl;
+        step.velocity = ctx->f6.fl - step.decrement;
+        // Initially restrict to verified normal airborne o16, excluding wind-up,
+        // lift/jet, sidekick pad and transformer motion. No character-ID checks.
+        step.eligible = jfg_60hz_enabled() && ctx->f14.fl == 1.0f &&
+            MEM_BU(0x568, state) == 3 && MEM_B(0x57A, state) == 0 &&
+            read_float(0x594, state) == 0.0f &&
+            MEM_BU(0x10D, state) == 0 && MEM_BU(0x19F, state) == 0;
+    }
+    const bool matched = step.obj == obj && step.state == state && step.sp == ctx->r29;
+    if (site == 2 && matched && step.eligible && ctx->f0.fl == 1.0f &&
+        read_float(0x20, obj) == step.velocity && read_float(0x10, obj) == step.y &&
+        read_float(0x40, state) == step.y) {
+        // f4 is the completed dy product at 82005F4C; velocity in RAM stays intact.
+        ctx->f4.fl -= step.decrement * 0.5f;
+        step.expected_y = step.y + ctx->f4.fl;
+        step.applied = true;
+    }
+    bool restored = false;
+    if (site == 3 && matched && step.applied && ctx->r3 == 0 &&
+        read_float(0x10, obj) == step.expected_y && read_float(0x40, state) == step.y &&
+        read_float(0x20, obj) == step.velocity) {
+        // Before original store 82005FFC, NOT after the subsequent collision zeros.
+        ctx->f10.fl = step.velocity;
+        restored = true;
+    }
+    if (!trace) return;
+    jfg_logf("JFG_PHYSICS frame=%llu site=%d obj=%08X state=%u hold=%d countdown=%d y=%.8f vy=%.8f k=%.8f g=%.8f delta=%.8f operand=%.8f helper=%u,%u ybits=%08X vybits=%08X\n",
+        (unsigned long long)jfg_gameplay_frame, site, (unsigned)obj,
+        (unsigned)MEM_BU(0x568, state), (int)MEM_B(0x57B, state), (int)MEM_B(0x57A, state),
+        read_float(0x10, obj), read_float(0x20, obj), read_float(0x594, state), read_float(0, (gpr)(int32_t)0x800F6DC4),
+        site == 0 ? ctx->f14.fl : ctx->f0.fl, site == 0 ? ctx->f4.fl : ctx->f8.fl,
+        (unsigned)MEM_BU(0x10D, state), (unsigned)MEM_BU(0x19F, state), (unsigned)MEM_W(0x10, obj), (unsigned)MEM_W(0x20, obj));
+    if (site >= 2) jfg_logf("JFG_VERTICAL_STEP frame=%llu site=%d applied=%d restored=%d expected_y=%.8f ground=%d\n",
+        (unsigned long long)jfg_gameplay_frame, site, step.applied, restored, step.expected_y, (int)ctx->r3);
 }
 
 // ---- Debug quick start (--jfg-level, default off) ----

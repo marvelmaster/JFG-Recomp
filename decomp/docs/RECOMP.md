@@ -3,6 +3,26 @@
 ## CURRENT STATUS (2026-10-16) - read this first
 Everything below this section is the chronological log (oldest first); the newest entries are at the end.
 
+**2026-10-16 02:10 — active task: Experimental 60 Hz vertical physics.** [Trace] Baseline at
+`904acb2`: five runs per mode, two CU jumps per run, all RUN_VALID=1/max_instances_seen=1,
+saves unchanged. 30 Hz apex 55.19995 or 63.19995, observed airtime 499–534 ms;
+60 Hz apex 67.15017, normally 566–568 ms (one delayed run 586 ms, five delta=2 updates).
+Walking 235.34–235.64 units/s. Original traces preserved locally under
+`runlogs/jump_baseline_904acb2/`. [Code] Exact seven-overlay instruction inventory is in
+`docs/60hz_vertical_audit.md`. o16 wind-up hold count can produce 7.5/8.0 impulses;
+runtime correlation is pending. Diagnostic-only o16 gravity/displacement hooks are being built;
+no physics correction yet. Mesh fix is accepted; water seam and splitscreen are out of scope.
+Option remains Experimental/default OFF.
+
+**02:18 update:** [Trace] o16 correction passed five A/B runs per mode. Post-fix 60 Hz
+apex63.32502 (extra odd-VI sample; common-time apex63.20002), normal airtime550–551ms.
+Matched launch8 trajectory differs from original30 by <=0.00011444 units; original30
+Y is unchanged exactly. Hold6/7.5 and hold8/8.0 now both explicitly traced at30Hz.
+[Code] Crucial additional fix: preserve true velocity before the original reconstructed
+velocity store only for verified unimpeded steps; collision zeroing still runs afterwards.
+Only o16 normal airborne state3 is patched. Other six overlays and initial ledge fall before
+state3 remain open; no claim of a complete player-physics fix. See latest timed entry below.
+
 **Fast menu-free Goldwood start (2026-10-15 night, opt-in, default off, entry "night: fast start"):**
 `--jfg-test-start goldwood` sets up the game's own new-game state (mainSetDefaultGame, mainSetMode(0)) at the main
 loop's first level-0 request and requests 0x5C "Forest Day Landing" with char 1 (Juno) directly. 0x5C is active about
@@ -1489,3 +1509,75 @@ CPU-side pair capture in src/main/main.cpp (jfg_capture_matrix_pair / jfg_compar
 | test_skeletal_mesh 60 Hz x1 (-Mode60 -Dl 1481) | PASS |
 | test_skeletal_mesh -Aspect Original / -WindowSize 1890,810 | PASS (scales 1.0 / 0.571) |
 | test_menu_free_start fast / -Normal | PASS / PASS (0x5C landed, title 0x15D) |
+
+## 2026-10-16 02:13 — vertical baseline, exact recurrence and first o16 trial
+
+[Trace] Five runs/mode at 904acb2, two jumps/run, input
+`1000:CU:150,2600:CU:150,4000:UP:3000`, `--jfg-test-start goldwood`,
+`JFG_60HZ_GAMEPLAY=0/1;JFG_NO_AUDIO=1`. All valid/single instance/saves unchanged.
+30 Hz apex 55.19995 or 63.19995, airtime 499–534 ms; 60 Hz 67.15017,
+normally 566–568 ms. One 60 Hz run had five d=2 updates and one 586 ms airtime;
+do not silently treat that run as steady 60 Hz. Full updates preserved in local runlogs.
+
+[Code] Seven kernels and special paths are inventoried in `docs/60hz_vertical_audit.md`.
+o16 normal standing jump accumulates hold VI in state57B during wind-up state57A;
+impulse is 6+6*hold/24. Hold6/8 gives 7.5/8.0. Runtime probes subsequently confirmed
+hold8 and launch8.0 in both modes (two jumps each); the hold6 class still needs an
+explicit probe. Release sampling can quantize the held duration differently.
+
+[Trace] The actual Juno route executes o16 82005C00 and 82005F48. g=f32(0.45),
+k=0, helper flags 0/0. The cumulative model reproduces every free-flight Y and
+velocity bit in these instrumented baselines (16 steps/jump at 30 Hz, 34 at 60 Hz):
+`v1=f32(v-f32(g*d)); y1=f32(y+f32(v1*d)); v=f32(f32(y1-y)/d)`.
+Landing collision is separately excluded from this free-flight model, not misreported
+as integration error. `tools/analyze_jump.py` exports measurements and model errors.
+
+[Code] Essential feedback omitted by the initial proposal: o16 reconstructs velocity
+from actual displacement after controlGroundHits, stores at 82005FFC, then applies
+collision zeroing. Changing only dy would feed an extra gravity term into the next step.
+Ignoring roundoff, two corrected d=1 steps give total displacement 2*v0-4*a and
+final velocity v0-2*a, exactly the original d=2 step, when each dy is v_new-a/2
+and displacement reconstruction does not replace true velocity with v_new-a/2.
+
+[Code] First trial is restricted to o16 state3, countdown0, k0, d1, absent helper modes.
+Hook 82005C00 captures actual gravity decrement/new velocity; 82005F4C corrects only
+the completed dy register f4. Hook 82005FFC restores f10 only when object/state/stack
+match, baseline Y is unchanged, groundHit=0, and actual Y equals expected corrected Y.
+The later original collision-zero instructions remain intact. 30 Hz does not mutate
+any register or memory. Other six overlays are inventoried but not patched yet.
+The trial built successfully; post-fix measurements and wider regression are pending.
+
+[Code] Generator now resolves its decomp root from the script location instead of
+silently reading the stale external tree. RC_ROM/RC_OUT allow explicit read-only ROM
+input/output selection. No generated C hand edits or generated-file commits.
+
+## 2026-10-16 02:20 — o16 normal-jump verification, incomplete wider physics scope
+
+[Trace] Five post-fix runs/mode, all RUN_VALID=1/max_instances_seen=1/saves unchanged.
+30Hz: apex55.19995/63.19995, observed airtime498–534ms. 60Hz: apex63.32502,
+airtime550–551ms, one delayed567ms; steady update rates30.00 /59.77–60.00.
+Walking235.34–235.87 units/s, scroll application~30.06/s in60Hz. Original30 Y is
+float-identical for matched impulse classes. Both hold6/launch7.5 and hold8/launch8
+are explicitly traced, no longer inferred from position secants.
+
+[Trace] Matched launch8 comparison: maximum common-time Y difference0.00011444 units,
+landing34VI both modes. 60Hz sampled apex at17VI is63.32502, versus30Hz at16VI63.19995;
+common-time apex63.20002. Exact float32 recurrence has zero cumulative free-flight
+position/velocity error. Landing correctly does not restore velocity through a collision.
+An additional60Hz CU117ms run generates hold6/launch7.5: apex55.20002, landing32VI,
+observed airtime516–518ms versus30Hz lower class~499–500ms. Wall-time airtime starts at
+the first elevated sample and is therefore sampling-biased; common-VI landing is equal.
+
+[Trace] Switch plans `1300:1,1500:0,5000:1,6000:0` from30 and inverse from60 both pass
+single-instance/saves checks. First switch pair is midair, second during walking.
+Both flight trajectories match the variable-delta corrected float32 model exactly:
+no position spike, extra gravity or hang in these runs. Walking235.48/235.38 units/s.
+Mesh script30Hz PASS, capture checker PASS, shots present, saves unchanged.
+Fast Goldwood startup PASS. Normal start PASS (title0x15D, no test-start hook, saves unchanged).
+
+[Code] Not complete: only o16 ordinary state3/countdown0/k0 is corrected. The early
+ledge-fall phase before state3, other six kernels, lift/jet/water/knockback/scripted
+motion need separate evidence. No fall-from-edge matrix, long-hold matrix, new enemy/
+projectile/particle audit, animation-cycle/cutscene/audio/long-run validation completed
+in this checkpoint. Existing prior successes are not new regression results.
+Experimental/default OFF remains mandatory. Mesh/water seam/splitscreen untouched.
