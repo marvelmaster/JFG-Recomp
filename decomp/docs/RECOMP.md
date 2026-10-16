@@ -1581,3 +1581,8 @@ motion need separate evidence. No fall-from-edge matrix, long-hold matrix, new e
 projectile/particle audit, animation-cycle/cutscene/audio/long-run validation completed
 in this checkpoint. Existing prior successes are not new regression results.
 Experimental/default OFF remains mandatory. Mesh/water seam/splitscreen untouched.
+
+## 2026-10-16 quota pause
+[Trace] Final generator reproduction: all 60 files identical, final build exit=0.
+Implementation 0bac4f3 pushed to jfg/main. User quota threshold reached (91 percent used);
+work paused, PC standby requested. Remaining physics scope is explicitly listed above.

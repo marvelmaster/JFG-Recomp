@@ -1,5 +1,11 @@
 # AI handoff (ChatGPT planner <-> Codex implementer)
 
+## Paused at user quota threshold - 2026-10-16
+
+Implementation commit: 0bac4f3, pushed to jfg/main. Final build exit=0; all 60 regenerated files identical.
+5-hour usage reached 91 percent; user requested pause and PC standby. Resume the remaining physics scope
+listed below, retaining the validated o16 normal-jump fix. Do not redo mesh analysis.
+
 ## Active follow-up — 2026-10-16 02:18
 
 User superseded older tasks: only Experimental 60 Hz Jump/Gravity, starting at `904acb2`.
